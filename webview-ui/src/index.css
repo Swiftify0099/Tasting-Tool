@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  :root {
+    --scrollbar-bg: #0f172a;
+    --scrollbar-thumb: #334155;
+    --scrollbar-thumb-hover: #6366f1;
+  }
+
+  body {
+    @apply bg-surface-950 text-white font-sans antialiased;
+    min-height: 100vh;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+  ::selection { background: rgba(99,102,241,0.35); color: #fff; }
+}
+
+@layer components {
+  /* ── Buttons ────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
+           transition-all duration-200 active:scale-95 cursor-pointer select-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 hover:bg-brand-500 text-white shadow-glow-sm
+           hover:shadow-glow;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-800 hover:bg-surface-700 text-slate-200
+           border border-slate-700 hover:border-slate-500;
+  }
+  .btn-danger {
+    @apply btn bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30;
+  }
+  .btn-ghost {
+    @apply btn hover:bg-white/5 text-slate-400 hover:text-white;
+  }
+  .btn-success {
+    @apply btn bg-success/20 hover:bg-success/30 text-success border border-success/30;
+  }
+  .btn-warning {
+    @apply btn bg-warning/20 hover:bg-warning/30 text-warning border border-warning/30;
+  }
+  .btn-icon {
+    @apply p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white
+           transition-colors duration-150 cursor-pointer;
+  }
+
+  /* ── Cards ──────────────────────────────────── */
+  .card {
+    @apply bg-surface-900 border border-slate-800 rounded-xl shadow-card;
+  }
+  .card-glass {
+    @apply bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl;
+  }
+
+  /* ── Inputs ─────────────────────────────────── */
+  .input {
+    @apply w-full bg-surface-900 border border-slate-700 rounded-lg px-3 py-2
+           text-sm text-white placeholder-slate-500
+           focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50
+           transition-colors duration-150;
+  }
+  .input-sm {
+    @apply input px-2 py-1 text-xs;
+  }
+  .select {
+    @apply input cursor-pointer;
+  }
+  .textarea {
+    @apply input resize-none font-mono text-xs;
+  }
+  .label {
+    @apply block text-xs font-medium text-slate-400 mb-1;
+  }
+
+  /* ── Badges ─────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-brand  { @apply badge bg-brand-500/20  text-brand-300  border border-brand-500/30; }
+  .badge-success{ @apply badge bg-success/20    text-success    border border-success/30; }
+  .badge-warning{ @apply badge bg-warning/20    text-warning    border border-warning/30; }
+  .badge-danger { @apply badge bg-danger/20     text-danger     border border-danger/30; }
+  .badge-slate  { @apply badge bg-slate-700     text-slate-300; }
+
+  /* ── Step Card ──────────────────────────────── */
+  .step-card {
+    @apply card p-3 cursor-grab active:cursor-grabbing
+           hover:border-brand-500/50 transition-all duration-200
+           hover:shadow-glow-sm animate-fade-in;
+  }
+  .step-card.disabled {
+    @apply opacity-40 border-slate-800;
+  }
+
+  /* ── Toolbox Item ───────────────────────────── */
+  .tool-item {
+    @apply flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium
+           cursor-grab active:cursor-grabbing select-none
+           bg-surface-900 border border-slate-800
+           hover:border-brand-500/60 hover:bg-brand-950/60 hover:text-brand-300
+           transition-all duration-150;
+  }
+
+  /* ── Section Header ─────────────────────────── */
+  .section-header {
+    @apply flex items-center justify-between px-4 py-3
+           border-b border-slate-800 text-xs font-semibold
+           text-slate-400 uppercase tracking-wider;
+  }
+
+  /* ── Page Header ────────────────────────────── */
+  .page-header {
+    @apply flex items-center justify-between p-6 border-b border-slate-800
+           bg-surface-900/50;
+  }
+
+  /* ── Nav Link ───────────────────────────────── */
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium
+           text-slate-400 hover:text-white hover:bg-white/5
+           transition-all duration-150;
+  }
+  .nav-link.active {
+    @apply text-white bg-brand-600/20 border border-brand-500/30 text-brand-300;
+  }
+
+  /* ── Code Block ─────────────────────────────── */
+  .code-block {
+    @apply bg-surface-950 border border-slate-800 rounded-lg p-4
+           font-mono text-xs text-slate-300 overflow-auto;
+  }
+
+  /* ── Divider ────────────────────────────────── */
+  .divider { @apply border-t border-slate-800 my-4; }
+
+  /* ── Tooltip ────────────────────────────────── */
+  .tooltip {
+    @apply absolute z-50 px-2 py-1 text-xs text-white bg-surface-800
+           border border-slate-700 rounded shadow-card
+           pointer-events-none whitespace-nowrap;
+  }
+
+  /* ── Empty State ────────────────────────────── */
+  .empty-state {
+    @apply flex flex-col items-center justify-center gap-4 py-16 text-center;
+  }
+
+  /* ── Action Color Chips ─────────────────────── */
+  .chip-visit     { @apply bg-sky-500/20     text-sky-300     border-sky-500/40; }
+  .chip-click     { @apply bg-blue-500/20    text-blue-300    border-blue-500/40; }
+  .chip-fill      { @apply bg-violet-500/20  text-violet-300  border-violet-500/40; }
+  .chip-select    { @apply bg-purple-500/20  text-purple-300  border-purple-500/40; }
+  .chip-upload    { @apply bg-pink-500/20    text-pink-300    border-pink-500/40; }
+  .chip-wait      { @apply bg-amber-500/20   text-amber-300   border-amber-500/40; }
+  .chip-assert    { @apply bg-green-500/20   text-green-300   border-green-500/40; }
+  .chip-popup     { @apply bg-orange-500/20  text-orange-300  border-orange-500/40; }
+  .chip-hover     { @apply bg-cyan-500/20    text-cyan-300    border-cyan-500/40; }
+  .chip-press     { @apply bg-teal-500/20    text-teal-300    border-teal-500/40; }
+  .chip-scroll    { @apply bg-lime-500/20    text-lime-300    border-lime-500/40; }
+  .chip-screenshot{ @apply bg-rose-500/20    text-rose-300    border-rose-500/40; }
+  .chip-mock      { @apply bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40; }
+  .chip-default   { @apply bg-slate-500/20   text-slate-300   border-slate-500/40; }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-400 to-accent;
+  }
+  .bg-grid {
+    background-image: linear-gradient(rgba(99,102,241,0.05) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(99,102,241,0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .glow-border {
+    box-shadow: inset 0 0 0 1px rgba(99,102,241,0.3), 0 0 20px rgba(99,102,241,0.15);
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}

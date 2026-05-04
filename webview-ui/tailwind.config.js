@@ -1,0 +1,68 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50:  '#f0f4ff',
+          100: '#e0eaff',
+          200: '#c7d7fe',
+          300: '#a5b8fc',
+          400: '#818cf8',
+          500: '#6366f1',
+          600: '#4f46e5',
+          700: '#4338ca',
+          800: '#3730a3',
+          900: '#312e81',
+          950: '#1e1b4b',
+        },
+        surface: {
+          50:  '#f8fafc',
+          100: '#f1f5f9',
+          200: '#e2e8f0',
+          300: '#cbd5e1',
+          400: '#94a3b8',
+          500: '#64748b',
+          600: '#475569',
+          700: '#334155',
+          800: '#1e293b',
+          850: '#172033',
+          900: '#0f172a',
+          950: '#080d1a',
+        },
+        accent: { DEFAULT: '#a78bfa', dark: '#7c3aed' },
+        success: { DEFAULT: '#10b981', dark: '#059669' },
+        warning: { DEFAULT: '#f59e0b', dark: '#d97706' },
+        danger:  { DEFAULT: '#ef4444', dark: '#dc2626' },
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      animation: {
+        'slide-in-right': 'slideInRight 0.25s ease-out',
+        'slide-in-left':  'slideInLeft  0.25s ease-out',
+        'fade-in':        'fadeIn       0.2s ease-out',
+        'bounce-soft':    'bounceSoft  0.4s ease',
+        'pulse-glow':     'pulseGlow   2s infinite',
+        'spin-slow':      'spin        3s linear infinite',
+      },
+      keyframes: {
+        slideInRight: { from: { transform: 'translateX(100%)', opacity: '0' }, to: { transform: 'translateX(0)', opacity: '1' } },
+        slideInLeft:  { from: { transform: 'translateX(-100%)', opacity: '0' }, to: { transform: 'translateX(0)', opacity: '1' } },
+        fadeIn:       { from: { opacity: '0', transform: 'translateY(8px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+        bounceSoft:   { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-4px)' } },
+        pulseGlow:    { '0%,100%': { boxShadow: '0 0 0 0 rgba(99,102,241,0)' }, '50%': { boxShadow: '0 0 16px 4px rgba(99,102,241,0.4)' } },
+      },
+      boxShadow: {
+        'glow':    '0 0 20px rgba(99,102,241,0.35)',
+        'glow-sm': '0 0 10px rgba(99,102,241,0.25)',
+        'card':    '0 4px 24px rgba(0,0,0,0.4)',
+        'step':    '0 2px 12px rgba(0,0,0,0.3)',
+      },
+      backdropBlur: { xs: '2px' },
+    },
+  },
+  plugins: [],
+};

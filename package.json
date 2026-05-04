@@ -1,0 +1,69 @@
+{
+  "name": "playwright-test-builder",
+  "displayName": "Playwright Test Builder",
+  "description": "Visual Playwright test builder with drag-and-drop toolbox, canvas, and code generation",
+  "version": "1.0.0",
+  "publisher": "playwright-tools",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Testing", "Other"],
+  "keywords": ["playwright", "testing", "automation", "webdriver"],
+  "activationEvents": ["onCommand:playwright-test-builder.open"],
+  "main": "./dist/extension.js",
+  "icon": "resources/icon.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "playwright-test-builder.open",
+        "title": "Open Playwright Test Builder",
+        "category": "Playwright",
+        "icon": "$(play)"
+      },
+      {
+        "command": "playwright-test-builder.generateFromFile",
+        "title": "Generate Test from JSON Flow",
+        "category": "Playwright"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "playwright-test-builder.open",
+          "group": "navigation",
+          "when": "resourceExtname == .json"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "playwright-test-builder.open",
+        "key": "ctrl+shift+p",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:ext && npm run build:ui",
+    "build:ext": "tsc -p tsconfig.json",
+    "build:ui": "cd webview-ui && npm run build",
+    "watch": "tsc -p tsconfig.json --watch",
+    "watch:ui": "cd webview-ui && npm run dev",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run build",
+    "test": "node ./dist/test/runTest.js",
+    "install:all": "npm install && cd webview-ui && npm install"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
