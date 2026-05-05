@@ -221,6 +221,9 @@ export default function RunnerPage() {
   useVSCodeListener('TEST_RUN_LOG', (payload) => {
     const p = payload as { logType: string; message: string };
     const tm: Record<string,RunLog['type']> = { info:'info', success:'success', error:'error', step:'step' };
+    // Auto-activate running state when navigated from GeneratorPage
+    setRunning(true);
+    setStatus(prev => prev === 'idle' ? 'running' : prev);
     pushLog(p.message, tm[p.logType] ?? 'info');
     if (p.logType === 'step') {
       const m = p.message.match(/^\[(\d+)\/(\d+)\]\s+(.+?)\s+\(([^)]+)\)$/);
@@ -238,6 +241,7 @@ export default function RunnerPage() {
     setStatus(p.passed ? 'passed' : 'failed');
     setActiveStepIdx(null);
     setActiveAction('');
+    setActiveLabel('');
     pushLog(p.passed ? '✅ Test run complete — all tests passed!' : '❌ Test run complete — some tests failed.', p.passed ? 'success' : 'error');
   });
 
