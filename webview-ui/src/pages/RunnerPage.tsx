@@ -5,7 +5,7 @@ import { useVSCodeListener } from '../hooks/useVSCode';
 import {
   Play, Terminal, CheckCircle, XCircle, Clock, Zap,
   RefreshCw, Settings, Globe, Eye, EyeOff, MousePointer,
-  Lock, Loader
+  Lock, Loader, ChevronLeft, ChevronRight, RotateCw, AlertCircle
 } from 'lucide-react';
 
 interface RunLog { time: string; message: string; type: 'info'|'success'|'error'|'step'; }
@@ -33,11 +33,13 @@ function normalizeUrl(raw: string): string {
 }
 
 function SimBrowser({
-  url, running, status, activeAction, activeLabel, stepIdx, totalSteps,
+  url, running, status, activeAction, activeLabel, stepIdx, totalSteps, iframeRef, onLoad,
 }: {
   url: string; running: boolean; status: string;
   activeAction: string; activeLabel: string;
   stepIdx: number|null; totalSteps: number;
+  iframeRef?: React.RefObject<HTMLIFrameElement>;
+  onLoad?: () => void;
 }) {
   const color      = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actionText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
@@ -48,14 +50,17 @@ function SimBrowser({
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 relative overflow-hidden bg-white">
 
-        {/* ── Live Website Iframe ── */}
+        {/* ── Live Website Iframe (fully interactive) ── */}
         {hasUrl && (
           <iframe
+            ref={iframeRef}
             key={url}
             src={url}
-            className="absolute inset-0 w-full h-full border-0 pointer-events-none"
+            className="absolute inset-0 w-full h-full border-0"
             title="Live Browser Preview"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
+            allow="autoplay; fullscreen"
+            onLoad={onLoad}
           />
         )}
 
@@ -208,7 +213,10 @@ export default function RunnerPage() {
   const [activeAction, setActiveAction]   = useState('');
   const [activeLabel, setActiveLabel]     = useState('');
   const [displayUrl, setDisplayUrl]       = useState('');
+  const [urlInput, setUrlInput]           = useState('');
+  const [iframeLoading, setIframeLoading] = useState(false);
   const logEndRef    = useRef<HTMLDivElement>(null);
+  const iframeRef    = useRef<HTMLIFrameElement>(null);
   const autoRunFired = useRef(false);
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
@@ -216,10 +224,25 @@ export default function RunnerPage() {
   // Compute initial display URL: baseUrl → first visit step url
   useEffect(() => {
     const base = normalizeUrl(currentFlow.baseUrl);
-    if (base) { setDisplayUrl(base); return; }
+    if (base) { setDisplayUrl(base); setUrlInput(base); return; }
     const visitStep = currentFlow.steps.find(s => s.action === 'visit' && s.url);
-    if (visitStep?.url) setDisplayUrl(normalizeUrl(visitStep.url));
+    if (visitStep?.url) {
+      const u = normalizeUrl(visitStep.url);
+      setDisplayUrl(u);
+      setUrlInput(u);
+    }
   }, [currentFlow.baseUrl, currentFlow.steps]);
+
+  // Keep urlInput in sync when displayUrl changes during test run
+  useEffect(() => { if (displayUrl) setUrlInput(displayUrl); }, [displayUrl]);
+
+  const navigateTo = (raw: string) => {
+    const u = normalizeUrl(raw.trim()) || raw.trim();
+    if (!u) return;
+    setDisplayUrl(u);
+    setUrlInput(u);
+    setIframeLoading(true);
+  };
 
   const pushLog = (message: string, type: RunLog['type'] = 'info') =>
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -419,27 +442,75 @@ export default function RunnerPage() {
         {showPreview && (
           <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#0d1117]">
             {/* Browser chrome */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800 bg-[#1a1f2e] flex-shrink-0">
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <div className="w-3 h-3 rounded-full bg-red-400/70" />
-                <div className="w-3 h-3 rounded-full bg-amber-400/70" />
-                <div className="w-3 h-3 rounded-full bg-emerald-400/70" />
-              </div>
-              <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                <div className="flex items-center gap-1.5 bg-white/5 border border-slate-700 rounded-t px-3 py-1 text-[10px] text-slate-300">
-                  <Globe className="w-2.5 h-2.5" />
-                  <span className="max-w-20 truncate">{currentFlow.name||'New Tab'}</span>
+            <div className="flex flex-col border-b border-slate-800 bg-[#1a1f2e] flex-shrink-0">
+              {/* Tab bar */}
+              <div className="flex items-center gap-2 px-3 pt-1.5">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="w-3 h-3 rounded-full bg-red-400/70" />
+                  <div className="w-3 h-3 rounded-full bg-amber-400/70" />
+                  <div className="w-3 h-3 rounded-full bg-emerald-400/70" />
+                </div>
+                <div className="flex items-center gap-1 ml-2">
+                  <div className="flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 border-b-0 rounded-t-lg px-4 py-1.5 text-[10px] text-slate-300">
+                    {iframeLoading
+                      ? <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin" />
+                      : <Globe className="w-2.5 h-2.5 text-slate-400" />
+                    }
+                    <span className="max-w-28 truncate ml-1">{displayUrl ? new URL(displayUrl.startsWith('http') ? displayUrl : 'https://'+displayUrl).hostname : (currentFlow.name||'New Tab')}</span>
+                  </div>
                 </div>
               </div>
-              {/* URL bar */}
-              <div className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 rounded px-2.5 py-1 min-w-0">
-                <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" />
-                {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0" />}
-                <span className="text-[11px] text-slate-300 truncate font-mono">
-                  {displayUrl || 'about:blank'}
-                </span>
+              {/* Navigation bar */}
+              <div className="flex items-center gap-1.5 px-3 pb-2 pt-1">
+                {/* Back / Forward / Refresh */}
+                <button
+                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                  onClick={() => iframeRef.current?.contentWindow?.history.back()}
+                  title="Go back"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                  onClick={() => iframeRef.current?.contentWindow?.history.forward()}
+                  title="Go forward"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                  onClick={() => { setIframeLoading(true); if(iframeRef.current) iframeRef.current.src = iframeRef.current.src; }}
+                  title="Reload page"
+                >
+                  {iframeLoading
+                    ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                    : <RotateCw className="w-3.5 h-3.5" />
+                  }
+                </button>
+                {/* Editable URL bar */}
+                <form
+                  className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 hover:border-slate-500 focus-within:border-brand-500 rounded-full px-3 py-1 min-w-0 transition-colors"
+                  onSubmit={e => { e.preventDefault(); navigateTo(urlInput); }}
+                >
+                  {displayUrl.startsWith('https') ? (
+                    <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" />
+                  ) : displayUrl ? (
+                    <AlertCircle className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
+                  ) : (
+                    <Globe className="w-2.5 h-2.5 text-slate-500 flex-shrink-0" />
+                  )}
+                  <input
+                    className="flex-1 bg-transparent text-[11px] text-slate-200 font-mono outline-none placeholder:text-slate-600 min-w-0"
+                    value={urlInput}
+                    onChange={e => setUrlInput(e.target.value)}
+                    onFocus={e => e.target.select()}
+                    placeholder="Enter URL and press Enter…"
+                    spellCheck={false}
+                  />
+                  {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0" />}
+                </form>
+                <div className="text-[10px] text-slate-600 capitalize flex-shrink-0 pl-1">{state.generatorOptions.browserType}</div>
               </div>
-              <div className="text-[10px] text-slate-600 capitalize flex-shrink-0">{state.generatorOptions.browserType}</div>
             </div>
 
             {/* Simulated page */}
@@ -452,13 +523,15 @@ export default function RunnerPage() {
                 activeLabel={activeLabel}
                 stepIdx={activeStepIdx}
                 totalSteps={enabledSteps.length}
+                iframeRef={iframeRef}
+                onLoad={() => setIframeLoading(false)}
               />
             </div>
 
             {/* Footer */}
             <div className="flex items-center justify-between px-3 py-1 border-t border-slate-800 bg-[#1a1f2e] flex-shrink-0 text-[10px] text-slate-600">
               <span>{running ? '● Executing test…' : status==='passed' ? '● Test passed' : status==='failed' ? '● Test failed' : '○ Idle'}</span>
-              <span className="capitalize">{state.generatorOptions.browserType} · {state.generatorOptions.headless?'headless':'headed'}</span>
+              <span>Scroll &amp; click inside the preview to interact · <span className="capitalize">{state.generatorOptions.browserType}</span></span>
             </div>
           </div>
         )}
