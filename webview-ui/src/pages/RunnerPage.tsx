@@ -5,7 +5,7 @@ import { useVSCodeListener } from '../hooks/useVSCode';
 import {
   Play, Terminal, CheckCircle, XCircle, Clock, Zap,
   RefreshCw, Settings, Globe, Eye, EyeOff, MousePointer,
-  Type, Search, ArrowRight, Shield, Lock, Loader
+  Lock, Loader
 } from 'lucide-react';
 
 interface RunLog { time: string; message: string; type: 'info'|'success'|'error'|'step'; }
@@ -17,7 +17,7 @@ const ACTION_COLOR: Record<string,string> = {
   default:'#6366f1',
 };
 const ACTION_LABEL: Record<string,string> = {
-  visit:'Navigating', click:'Clicking', dblclick:'Double-clicking',
+  visit:'Navigating to', click:'Clicking', dblclick:'Double-clicking',
   fill:'Filling input', type:'Typing', assert:'Asserting',
   hover:'Hovering', wait:'Waiting', screenshot:'Taking screenshot',
   check:'Checking', uncheck:'Unchecking', scroll:'Scrolling',
@@ -25,19 +25,24 @@ const ACTION_LABEL: Record<string,string> = {
   goforward:'Going forward', default:'Executing',
 };
 
-/* Real website iframe browser */
+/** Add https:// if missing, return empty string for blank/placeholder URLs */
+function normalizeUrl(raw: string): string {
+  if (!raw || raw === 'https://' || raw === 'http://') return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return 'https://' + raw;
+}
+
 function SimBrowser({
   url, running, status, activeAction, activeLabel, stepIdx, totalSteps,
 }: {
   url: string; running: boolean; status: string;
   activeAction: string; activeLabel: string;
-  stepIdx: number|null; totalSteps: number; currentFlow: any;
+  stepIdx: number|null; totalSteps: number;
 }) {
   const color      = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actionText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
   const progress   = stepIdx !== null ? ((stepIdx + 1) / totalSteps) * 100 : 0;
-
-  const hasUrl = url && url !== 'https://' && url.startsWith('http');
+  const hasUrl     = !!url;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -46,69 +51,89 @@ function SimBrowser({
         {/* ── Live Website Iframe ── */}
         {hasUrl && (
           <iframe
+            key={url}
             src={url}
             className="absolute inset-0 w-full h-full border-0 pointer-events-none"
             title="Live Browser Preview"
-            sandbox="allow-same-origin allow-scripts allow-forms"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           />
         )}
 
-        {/* Error fallback — show skeleton if no URL */}
+        {/* No-URL placeholder */}
         {!hasUrl && (
-          <div className="absolute inset-0 bg-gray-50 p-5 flex flex-col gap-3 pointer-events-none select-none">
-            <div className="flex items-center gap-3 pb-3 border-b border-gray-200">
-              <div className="w-8 h-8 rounded bg-indigo-100 flex items-center justify-center"><div className="w-4 h-4 rounded-full bg-indigo-400" /></div>
-              <div className="h-3 w-28 bg-gray-300 rounded" />
-              <div className="ml-auto flex gap-2"><div className="h-2.5 w-12 bg-gray-200 rounded" /><div className="h-2.5 w-12 bg-gray-200 rounded" /><div className="h-2.5 w-12 bg-gray-200 rounded" /></div>
-            </div>
-            <div className="flex gap-4 mt-2">
-              <div className="flex-1 space-y-2">
-                <div className="h-6 w-3/4 bg-gray-700 rounded" />
-                <div className="h-3 w-full bg-gray-200 rounded" />
-                <div className="h-3 w-5/6 bg-gray-200 rounded" />
-                <div className="h-3 w-4/6 bg-gray-200 rounded" />
-                <div className="flex gap-2 mt-3"><div className="h-8 w-24 bg-indigo-500 rounded" /><div className="h-8 w-24 bg-gray-200 rounded" /></div>
+          <div className="absolute inset-0 bg-gray-50 flex flex-col pointer-events-none select-none">
+            {/* Skeleton page */}
+            <div className="p-5 flex flex-col gap-3 flex-1">
+              <div className="flex items-center gap-3 pb-3 border-b border-gray-200">
+                <div className="w-8 h-8 rounded bg-indigo-100 flex items-center justify-center"><div className="w-4 h-4 rounded-full bg-indigo-400" /></div>
+                <div className="h-3 w-28 bg-gray-300 rounded" />
+                <div className="ml-auto flex gap-2">
+                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
+                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
+                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
+                </div>
               </div>
-              <div className="w-36 h-28 bg-indigo-100 rounded-xl flex-shrink-0" />
+              <div className="flex gap-4 mt-2">
+                <div className="flex-1 space-y-2">
+                  <div className="h-6 w-3/4 bg-gray-200 rounded" />
+                  <div className="h-3 w-full bg-gray-100 rounded" />
+                  <div className="h-3 w-5/6 bg-gray-100 rounded" />
+                  <div className="h-3 w-4/6 bg-gray-100 rounded" />
+                  <div className="flex gap-2 mt-3">
+                    <div className="h-8 w-24 bg-indigo-200 rounded" />
+                    <div className="h-8 w-24 bg-gray-200 rounded" />
+                  </div>
+                </div>
+                <div className="w-36 h-28 bg-indigo-50 rounded-xl flex-shrink-0" />
+              </div>
+              <div className="flex gap-3 mt-1">
+                {[1,2,3].map(i=>(
+                  <div key={i} className="flex-1 h-20 bg-white rounded-lg border border-gray-200 p-3 space-y-1.5">
+                    <div className="h-2.5 w-1/2 bg-gray-200 rounded"/>
+                    <div className="h-2 w-full bg-gray-100 rounded"/>
+                    <div className="h-2 w-3/4 bg-gray-100 rounded"/>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="flex gap-3 mt-1">
-              {[1,2,3].map(i=><div key={i} className="flex-1 h-20 bg-white rounded-lg border border-gray-200 p-3 space-y-1.5"><div className="h-2.5 w-1/2 bg-gray-300 rounded"/><div className="h-2 w-full bg-gray-100 rounded"/><div className="h-2 w-3/4 bg-gray-100 rounded"/></div>)}
-            </div>
-            
+            {/* Centered message */}
             <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center"><Globe className="w-7 h-7 text-indigo-300" /></div>
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center">
+                <Globe className="w-7 h-7 text-indigo-300" />
+              </div>
               <p className="text-sm font-semibold text-gray-600">No URL configured</p>
-              <p className="text-xs text-gray-400 text-center max-w-48">Set a Base URL in the Builder to see your website here.</p>
+              <p className="text-xs text-gray-400 text-center max-w-52">
+                Add a <b>Visit URL</b> step and set its URL, or set a Base URL in the Builder toolbar.
+              </p>
             </div>
           </div>
         )}
-        {/* ── Step overlays on top of screenshot ── */}
 
-        {/* Visit step: loading overlay */}
+        {/* ── Visit overlay: navigating spinner ── */}
         {running && activeAction === 'visit' && (
-          <div className="absolute inset-0 bg-white/70 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3">
-            <div className="relative">
-              <Loader className="w-10 h-10 text-sky-500 animate-spin" />
-            </div>
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3">
+            <Loader className="w-10 h-10 text-sky-500 animate-spin" />
             <p className="text-sm font-semibold text-gray-700">Navigating to page…</p>
-            <p className="text-xs font-mono text-sky-600 bg-sky-50 border border-sky-200 px-3 py-1 rounded">{url}</p>
+            <p className="text-xs font-mono text-sky-600 bg-sky-50 border border-sky-200 px-3 py-1 rounded max-w-[90%] truncate">{activeLabel || url}</p>
           </div>
         )}
 
-        {/* Click / hover overlay */}
+        {/* ── Click / hover overlay ── */}
         {running && (activeAction === 'click' || activeAction === 'hover' || activeAction === 'dblclick') && (
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute" style={{ top: '42%', left: '38%' }}>
               <MousePointer className="w-8 h-8 drop-shadow-xl" style={{ color }} />
-              {activeAction === 'click' && <>
-                <div className="absolute -top-1 -left-1 w-10 h-10 rounded-full border-4 animate-ping opacity-70" style={{ borderColor: color }} />
-                <div className="absolute -top-3 -left-3 w-14 h-14 rounded-full border-2 animate-ping opacity-30" style={{ borderColor: color, animationDelay: '0.15s' }} />
-              </>}
+              {activeAction === 'click' && (
+                <>
+                  <div className="absolute -top-1 -left-1 w-10 h-10 rounded-full border-4 animate-ping opacity-70" style={{ borderColor: color }} />
+                  <div className="absolute -top-3 -left-3 w-14 h-14 rounded-full border-2 animate-ping opacity-30" style={{ borderColor: color, animationDelay: '0.15s' }} />
+                </>
+              )}
             </div>
           </div>
         )}
 
-        {/* Assert overlay */}
+        {/* ── Assert overlay ── */}
         {running && activeAction === 'assert' && (
           <div className="absolute inset-0 pointer-events-none">
             <div className="absolute border-2 rounded-lg animate-pulse"
@@ -122,7 +147,7 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Fill / type overlay */}
+        {/* ── Fill / type overlay ── */}
         {running && (activeAction === 'fill' || activeAction === 'type') && (
           <div className="absolute pointer-events-none" style={{ bottom: '25%', left: '10%', right: '10%' }}>
             <div className="bg-white/90 border-2 rounded-lg p-2 shadow-xl backdrop-blur-sm" style={{ borderColor: color }}>
@@ -135,14 +160,14 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Scroll overlay */}
+        {/* ── Scroll overlay ── */}
         {running && activeAction === 'scroll' && (
           <div className="absolute right-3 top-1/4 bottom-1/4 w-2 bg-gray-200/80 rounded-full pointer-events-none">
             <div className="absolute w-full rounded-full animate-bounce" style={{ height:'30%', top:'30%', background: color }} />
           </div>
         )}
 
-        {/* Step action badge — shown over screenshot */}
+        {/* ── Step badge — shown over screenshot ── */}
         {running && activeAction && activeAction !== 'visit' && (
           <div className="absolute top-3 left-3 right-3 flex items-center gap-2 px-3 py-2 rounded-xl text-white text-xs font-semibold shadow-2xl backdrop-blur-sm border"
             style={{ background:`${color}dd`, borderColor:`${color}80` }}>
@@ -153,7 +178,7 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Playwright scan lines */}
+        {/* ── Scan lines ── */}
         {running && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-400/60 to-transparent animate-pulse" style={{ top: '33%' }} />
@@ -161,7 +186,7 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Progress bar */}
+        {/* ── Progress bar ── */}
         {running && (
           <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-gray-200/50">
             <div className="h-full transition-all duration-700 ease-out rounded-r"
@@ -169,7 +194,7 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Pass overlay */}
+        {/* ── Pass overlay ── */}
         {status === 'passed' && (
           <div className="absolute inset-0 bg-emerald-500/15 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
             <div className="w-20 h-20 rounded-full bg-emerald-500 flex items-center justify-center shadow-2xl ring-4 ring-emerald-300/30">
@@ -182,7 +207,7 @@ function SimBrowser({
           </div>
         )}
 
-        {/* Fail overlay */}
+        {/* ── Fail overlay ── */}
         {status === 'failed' && (
           <div className="absolute inset-0 bg-red-500/15 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
             <div className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-2xl ring-4 ring-red-300/30">
@@ -200,22 +225,31 @@ function SimBrowser({
 }
 
 export default function RunnerPage() {
-  const { state, generateTest, runTest } = useFlow();
+  const { state, generateTest, runTest, updateFlow } = useFlow();
   const navigate = useNavigate();
   const location = useLocation();
   const { currentFlow } = state;
 
-  const [logs, setLogs]         = useState<RunLog[]>([]);
-  const [running, setRunning]   = useState(false);
-  const [status, setStatus]     = useState<'idle'|'running'|'passed'|'failed'>('idle');
+  const [logs, setLogs]           = useState<RunLog[]>([]);
+  const [running, setRunning]     = useState(false);
+  const [status, setStatus]       = useState<'idle'|'running'|'passed'|'failed'>('idle');
   const [showPreview, setShowPreview] = useState(true);
   const [activeStepIdx, setActiveStepIdx] = useState<number|null>(null);
   const [activeAction, setActiveAction]   = useState('');
   const [activeLabel, setActiveLabel]     = useState('');
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [displayUrl, setDisplayUrl]       = useState('');
+  const logEndRef    = useRef<HTMLDivElement>(null);
   const autoRunFired = useRef(false);
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
+
+  // Compute initial display URL: baseUrl → first visit step url
+  useEffect(() => {
+    const base = normalizeUrl(currentFlow.baseUrl);
+    if (base) { setDisplayUrl(base); return; }
+    const visitStep = currentFlow.steps.find(s => s.action === 'visit' && s.url);
+    if (visitStep?.url) setDisplayUrl(normalizeUrl(visitStep.url));
+  }, [currentFlow.baseUrl, currentFlow.steps]);
 
   const pushLog = (message: string, type: RunLog['type'] = 'info') =>
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -229,9 +263,19 @@ export default function RunnerPage() {
     if (p.logType === 'step') {
       const m = p.message.match(/^\[(\d+)\/(\d+)\]\s+(.+?)\s+\(([^)]+)\)$/);
       if (m) {
-        setActiveStepIdx(parseInt(m[1]) - 1);
+        const idx   = parseInt(m[1]) - 1;
+        const action = m[4];
+        setActiveStepIdx(idx);
         setActiveLabel(m[3]);
-        setActiveAction(m[4]);
+        setActiveAction(action);
+        // When a visit step executes, update displayUrl to that step's URL
+        if (action === 'visit') {
+          const step = currentFlow.steps.filter(s => s.enabled)[idx];
+          if (step?.url) {
+            const u = normalizeUrl(step.url);
+            if (u) setDisplayUrl(u);
+          }
+        }
       }
     }
   });
@@ -248,6 +292,17 @@ export default function RunnerPage() {
 
   const handleGenAndRun = () => {
     if (!currentFlow.steps.length) { pushLog('No steps — add steps in Builder first.', 'error'); return; }
+
+    // Auto-sync baseUrl from first visit step if not set
+    const hasBase = currentFlow.baseUrl && currentFlow.baseUrl !== 'https://';
+    if (!hasBase) {
+      const visitStep = currentFlow.steps.find(s => s.action === 'visit' && s.url);
+      if (visitStep?.url) {
+        const u = normalizeUrl(visitStep.url);
+        if (u) { updateFlow({ baseUrl: u }); setDisplayUrl(u); }
+      }
+    }
+
     setLogs([]); setRunning(true); setStatus('running');
     setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
     pushLog(`▶  Starting: "${currentFlow.name}"`, 'info');
@@ -257,9 +312,12 @@ export default function RunnerPage() {
     setTimeout(() => { pushLog('Dispatching to Playwright runner…', 'info'); runTest(); }, 700);
   };
 
-  const handleClear = () => { setLogs([]); setStatus('idle'); setRunning(false); setActiveStepIdx(null); setActiveAction(''); };
+  const handleClear = () => {
+    setLogs([]); setStatus('idle'); setRunning(false);
+    setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
+  };
 
-  // Auto-run when navigated from Builder's Run button — must be after handleGenAndRun
+  // Auto-run when navigated from Builder's Run button
   useEffect(() => {
     const loc = location as any;
     if (loc?.state?.autoRun && !autoRunFired.current && currentFlow.steps.length > 0) {
@@ -269,17 +327,17 @@ export default function RunnerPage() {
   }, []);
 
   const logColors: Record<RunLog['type'],string> = { info:'text-slate-400', success:'text-emerald-400', error:'text-red-400', step:'text-indigo-300' };
-  const logPfx: Record<RunLog['type'],string>    = { info:'ℹ', success:'✓', error:'✗', step:'→' };
+  const logPfx:    Record<RunLog['type'],string>  = { info:'ℹ', success:'✓', error:'✗', step:'→' };
 
   const statusBg = status==='passed' ? 'bg-emerald-500/20 border-emerald-500/30'
     : status==='failed'  ? 'bg-red-500/20 border-red-500/30'
     : status==='running' ? 'bg-amber-500/20 border-amber-500/30'
-    : 'bg-emerald-500/20 border-emerald-500/30';
+    : 'bg-slate-700/30 border-slate-700/50';
 
   const statusIcon = status==='passed'  ? <CheckCircle className="w-4 h-4 text-emerald-400" />
     : status==='failed'  ? <XCircle   className="w-4 h-4 text-red-400" />
     : status==='running' ? <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
-    : <Play className="w-4 h-4 text-emerald-400" />;
+    : <Play className="w-4 h-4 text-slate-400" />;
 
   const enabledSteps = currentFlow.steps.filter(s=>s.enabled);
 
@@ -312,10 +370,16 @@ export default function RunnerPage() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats bar */}
       <div className="flex items-center gap-4 px-4 py-1.5 border-b border-slate-800 bg-surface-900/30 flex-shrink-0 text-xs text-slate-400 flex-wrap">
-        <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-brand-500" />Flow: <span className="text-white font-medium">{currentFlow.name}</span></div>
-        <div className="flex items-center gap-1.5"><Globe className="w-3 h-3" /><span className="text-white font-medium font-mono truncate max-w-44">{currentFlow.baseUrl||'no URL'}</span></div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-brand-500" />
+          Flow: <span className="text-white font-medium">{currentFlow.name}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Globe className="w-3 h-3" />
+          <span className="text-white font-medium font-mono truncate max-w-44">{displayUrl || 'no URL — add a Visit step'}</span>
+        </div>
         <div className="flex items-center gap-1.5"><Clock className="w-3 h-3" />{state.generatorOptions.timeout/1000}s</div>
         <div>Steps: <span className="text-white font-medium">{enabledSteps.length}</span></div>
         <div>Browser: <span className="text-white font-medium capitalize">{state.generatorOptions.browserType}</span></div>
@@ -327,7 +391,7 @@ export default function RunnerPage() {
         {/* Terminal */}
         <div className={`flex flex-col overflow-hidden border-r border-slate-800 ${showPreview?'w-[42%]':'flex-1'} transition-all duration-300`}>
           <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-surface-900/40 flex-shrink-0">
-            <Terminal className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-[11px] font-mono text-slate-600">$</span>
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Terminal</span>
             {running && <span className="ml-auto flex items-center gap-1.5 text-[10px] text-amber-400"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"/>LIVE</span>}
             {status==='passed' && <span className="ml-auto flex items-center gap-1 text-[10px] text-emerald-400"><CheckCircle className="w-3 h-3"/>PASSED</span>}
@@ -336,7 +400,7 @@ export default function RunnerPage() {
           <div className="flex-1 overflow-y-auto p-4 font-mono bg-[#080c12]">
             {logs.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-                <Terminal className="w-8 h-8 text-slate-700" />
+                <span className="text-3xl text-slate-700">$</span>
                 <p className="text-sm text-white font-medium">Ready to Run</p>
                 <p className="text-xs text-slate-600">{currentFlow.steps.length===0 ? 'Add steps in Builder first.' : 'Click "Generate & Run" to start.'}</p>
               </div>
@@ -352,11 +416,17 @@ export default function RunnerPage() {
                     <span className="break-all">{log.message}</span>
                   </div>
                 ))}
-                {running && <div className="flex items-center gap-2 text-xs text-amber-400 mt-2"><RefreshCw className="w-3 h-3 animate-spin"/><span className="animate-pulse">Processing…</span></div>}
+                {running && (
+                  <div className="flex items-center gap-2 text-xs text-amber-400 mt-2">
+                    <RefreshCw className="w-3 h-3 animate-spin"/>
+                    <span className="animate-pulse">Processing…</span>
+                  </div>
+                )}
                 <div ref={logEndRef} />
               </div>
             )}
           </div>
+
           {/* Step pills */}
           {currentFlow.steps.length > 0 && (
             <div className="px-3 py-2 border-t border-slate-800 bg-surface-900/30 flex-shrink-0">
@@ -364,7 +434,7 @@ export default function RunnerPage() {
                 {currentFlow.steps.map((step, i) => (
                   <span key={step.id} className={`text-[10px] px-1.5 py-0.5 rounded font-mono transition-all duration-300 ${
                     !step.enabled ? 'bg-slate-800 text-slate-600'
-                    : activeStepIdx===i ? 'bg-indigo-500 text-white shadow-glow-sm scale-105'
+                    : activeStepIdx===i ? 'bg-indigo-500 text-white scale-105'
                     : activeStepIdx!==null && i<activeStepIdx ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-slate-800 text-slate-500'}`}>
                     {i+1}
@@ -385,7 +455,6 @@ export default function RunnerPage() {
                 <div className="w-3 h-3 rounded-full bg-amber-400/70" />
                 <div className="w-3 h-3 rounded-full bg-emerald-400/70" />
               </div>
-              {/* Tabs */}
               <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                 <div className="flex items-center gap-1.5 bg-white/5 border border-slate-700 rounded-t px-3 py-1 text-[10px] text-slate-300">
                   <Globe className="w-2.5 h-2.5" />
@@ -395,10 +464,9 @@ export default function RunnerPage() {
               {/* URL bar */}
               <div className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 rounded px-2.5 py-1 min-w-0">
                 <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" />
-                {running ? <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0" /> : null}
+                {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0" />}
                 <span className="text-[11px] text-slate-300 truncate font-mono">
-                  {currentFlow.baseUrl && currentFlow.baseUrl !== 'https://'
-                    ? currentFlow.baseUrl : 'about:blank'}
+                  {displayUrl || 'about:blank'}
                 </span>
               </div>
               <div className="text-[10px] text-slate-600 capitalize flex-shrink-0">{state.generatorOptions.browserType}</div>
@@ -407,14 +475,13 @@ export default function RunnerPage() {
             {/* Simulated page */}
             <div className="flex-1 overflow-hidden">
               <SimBrowser
-                url={currentFlow.baseUrl}
+                url={displayUrl}
                 running={running}
                 status={status}
                 activeAction={activeAction}
                 activeLabel={activeLabel}
                 stepIdx={activeStepIdx}
                 totalSteps={enabledSteps.length}
-                currentFlow={currentFlow}
               />
             </div>
 
@@ -432,11 +499,21 @@ export default function RunnerPage() {
         <div className={`flex items-center gap-3 px-4 py-2.5 border-t flex-shrink-0 ${status==='passed'?'bg-emerald-500/10 border-emerald-500/20':'bg-red-500/10 border-red-500/20'}`}>
           {status==='passed' ? <CheckCircle className="w-5 h-5 text-emerald-400 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />}
           <div className="flex-1">
-            <p className={`text-sm font-semibold ${status==='passed'?'text-emerald-400':'text-red-400'}`}>{status==='passed'?'All tests passed!':'Test run failed'}</p>
-            <p className="text-xs text-slate-500">{status==='passed'?`${enabledSteps.length} step${enabledSteps.length!==1?'s':''} completed successfully.`:'Check terminal log for error details.'}</p>
+            <p className={`text-sm font-semibold ${status==='passed'?'text-emerald-400':'text-red-400'}`}>
+              {status==='passed'?'All tests passed!':'Test run failed'}
+            </p>
+            <p className="text-xs text-slate-500">
+              {status==='passed'
+                ? `${enabledSteps.length} step${enabledSteps.length!==1?'s':''} completed successfully.`
+                : 'Check terminal log for error details.'}
+            </p>
           </div>
           <div className="flex gap-2">
-            {status==='failed' && <button className="btn-secondary text-xs" onClick={handleGenAndRun}><RefreshCw className="w-3 h-3" /> Retry</button>}
+            {status==='failed' && (
+              <button className="btn-secondary text-xs" onClick={handleGenAndRun}>
+                <RefreshCw className="w-3 h-3" /> Retry
+              </button>
+            )}
             <button className="btn-ghost text-xs" onClick={handleClear}>Clear</button>
           </div>
         </div>
