@@ -86,9 +86,25 @@ export default function PropertiesPanel() {
 
         {/* ── Value ──────────────────────────────── */}
         {['fill','type','select','wait','networkrequest'].includes(s.action) && (
-          <Field label={s.action === 'wait' ? 'Wait Time (ms) or Selector' : s.action === 'select' ? 'Option Value' : 'Value'} required>
-            <input className="input-sm" placeholder={s.action === 'wait' ? '1000 or #element' : ''}
+          <Field label={
+            s.action === 'wait'           ? 'Wait Time (ms) or Selector' :
+            s.action === 'select'         ? 'Option Value' :
+            s.action === 'networkrequest' ? 'URL Pattern (partial or glob)' :
+            'Value'
+          } required>
+            <input className="input-sm"
+              placeholder={
+                s.action === 'wait'           ? '1000  or  #element' :
+                s.action === 'networkrequest' ? '**/api/users or /search' :
+                s.action === 'select'         ? 'option-value' : ''
+              }
               value={s.value ?? ''} onChange={e => upd({ value: e.target.value })} />
+            {s.action === 'networkrequest' && (
+              <p className="text-[10px] text-slate-500 mt-0.5">Waits until a response URL contains this pattern (status 200).</p>
+            )}
+            {s.action === 'wait' && (
+              <p className="text-[10px] text-slate-500 mt-0.5">Number → waitForTimeout. CSS/XPath → waitForSelector.</p>
+            )}
           </Field>
         )}
 
@@ -111,14 +127,45 @@ export default function PropertiesPanel() {
 
         {/* ── Scroll ────────────────────────────── */}
         {s.action === 'scroll' && (
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Scroll X">
-              <input type="number" className="input-sm" value={s.scrollX ?? 0} onChange={e => upd({ scrollX: parseInt(e.target.value) || 0 })} />
+          <>
+            <Field label="Scroll Type">
+              <select className="select text-xs py-1" value={s.scrollType ?? 'page'}
+                onChange={e => upd({ scrollType: e.target.value as 'page' | 'element' })}>
+                <option value="page">Page Scroll (pixels)</option>
+                <option value="element">Scroll Element into View</option>
+              </select>
             </Field>
-            <Field label="Scroll Y">
-              <input type="number" className="input-sm" value={s.scrollY ?? 0} onChange={e => upd({ scrollY: parseInt(e.target.value) || 0 })} />
-            </Field>
-          </div>
+            {(s.scrollType ?? 'page') === 'page' ? (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Scroll X (px)">
+                    <input type="number" className="input-sm" placeholder="0"
+                      value={s.scrollX ?? 0} onChange={e => upd({ scrollX: parseInt(e.target.value) || 0 })} />
+                  </Field>
+                  <Field label="Scroll Y (px)">
+                    <input type="number" className="input-sm" placeholder="500"
+                      value={s.scrollY ?? 500} onChange={e => upd({ scrollY: parseInt(e.target.value) || 0 })} />
+                  </Field>
+                </div>
+                <Field label="Behavior">
+                  <select className="select text-xs py-1" value={s.scrollBehavior ?? 'smooth'}
+                    onChange={e => upd({ scrollBehavior: e.target.value as 'smooth' | 'auto' })}>
+                    <option value="smooth">Smooth</option>
+                    <option value="auto">Instant</option>
+                  </select>
+                </Field>
+                <p className="text-[10px] text-slate-500 -mt-1">Positive Y scrolls down, negative scrolls up. E.g. Y=500 scrolls down 500px.</p>
+              </>
+            ) : (
+              <>
+                <Field label="Element Selector" required>
+                  <input className="input-sm font-mono" placeholder="#footer, .section, [data-id='x']"
+                    value={s.selector ?? ''} onChange={e => upd({ selector: e.target.value })} />
+                </Field>
+                <p className="text-[10px] text-slate-500 -mt-1">Scrolls the page until this element is visible.</p>
+              </>
+            )}
+          </>
         )}
 
         {/* ── Viewport ──────────────────────────── */}

@@ -32,6 +32,8 @@ export interface TestStep {
   frameSelector?: string;
   scrollX?: number;
   scrollY?: number;
+  scrollType?: 'page' | 'element';
+  scrollBehavior?: 'smooth' | 'auto';
   cookieName?: string;
   cookieValue?: string;
   storageKey?: string;

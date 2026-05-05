@@ -21,6 +21,206 @@ function setSavedFlows(flows: Record<string, any>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(flows));
 }
 
+/** Generate correct Playwright code for one step */
+function generateStepCode(s: any, baseUrl: string): string {
+  const sel     = s.selector ? `'${s.selector}'` : `'[data-testid="element"]'`;
+  const aSel    = s.assertSelector ? `'${s.assertSelector}'` : sel;
+  const timeout = s.timeout ?? 5000;
+
+  switch (s.action) {
+
+    // ── Navigation ────────────────────────────────────────────────
+    case 'visit':
+      return `  await page.goto('${s.url ?? s.value ?? baseUrl}');`;
+
+    case 'reload':
+      return `  await page.reload();`;
+
+    case 'goback':
+      return `  await page.goBack();`;
+
+    case 'goforward':
+      return `  await page.goForward();`;
+
+    case 'newpage':
+      return [
+        `  const newPage = await page.context().newPage();`,
+        s.url ? `  await newPage.goto('${s.url}');` : null,
+      ].filter(Boolean).join('\n');
+
+    case 'closepage':
+      return `  await page.close();`;
+
+    // ── Interaction ───────────────────────────────────────────────
+    case 'click':
+      return `  await page.click(${sel});`;
+
+    case 'dblclick':
+      return `  await page.dblclick(${sel});`;
+
+    case 'rightclick':
+      return `  await page.click(${sel}, { button: 'right' });`;
+
+    case 'hover':
+      return `  await page.hover(${sel});`;
+
+    case 'drag':
+      return `  await page.dragAndDrop(${sel}, '${s.dragTargetSelector ?? s.selector ?? ''}');`;
+
+    case 'scroll': {
+      if (s.scrollType === 'element') {
+        return `  await page.locator(${sel}).scrollIntoViewIfNeeded();`;
+      }
+      const x = s.scrollX ?? 0;
+      const y = s.scrollY ?? 500;
+      const behavior = s.scrollBehavior ?? 'smooth';
+      return `  await page.evaluate(() => window.scrollBy({ left: ${x}, top: ${y}, behavior: '${behavior}' }));`;
+    }
+
+    case 'popup': {
+      const trigger = s.value ?? 'click';
+      return [
+        `  const [popup] = await Promise.all([`,
+        `    page.waitForEvent('popup'),`,
+        `    page.${trigger}(${sel}),`,
+        `  ]);`,
+        `  await popup.waitForLoadState();`,
+      ].join('\n');
+    }
+
+    case 'press':
+      return `  await page.press(${sel}, '${s.key ?? s.value ?? 'Enter'}');`;
+
+    case 'focus':
+      return `  await page.focus(${sel});`;
+
+    case 'blur':
+      return `  await page.locator(${sel}).blur();`;
+
+    // ── Input ─────────────────────────────────────────────────────
+    case 'fill':
+      return `  await page.fill(${sel}, '${s.value ?? ''}');`;
+
+    case 'type':
+      return `  await page.type(${sel}, '${s.value ?? ''}');`;
+
+    case 'clear':
+      return `  await page.fill(${sel}, '');`;
+
+    case 'select':
+      return `  await page.selectOption(${sel}, '${s.value ?? ''}');`;
+
+    case 'check':
+      return `  await page.check(${sel});`;
+
+    case 'uncheck':
+      return `  await page.uncheck(${sel});`;
+
+    case 'upload':
+      return `  await page.setInputFiles(${sel}, '${s.uploadPath ?? ''}');`;
+
+    // ── Assertion ─────────────────────────────────────────────────
+    case 'assert': {
+      const expected = s.assertExpected ?? '';
+      switch (s.assertType ?? 'visibility') {
+        case 'url':
+          return `  await expect(page).toHaveURL('${expected}');`;
+        case 'title':
+          return `  await expect(page).toHaveTitle('${expected}');`;
+        case 'text':
+          return `  await expect(page.locator(${aSel})).toContainText('${expected}');`;
+        case 'visibility':
+          return expected === 'hidden'
+            ? `  await expect(page.locator(${aSel})).toBeHidden();`
+            : `  await expect(page.locator(${aSel})).toBeVisible();`;
+        case 'enabled':
+          return expected === 'disabled'
+            ? `  await expect(page.locator(${aSel})).toBeDisabled();`
+            : `  await expect(page.locator(${aSel})).toBeEnabled();`;
+        case 'checked':
+          return expected === 'unchecked'
+            ? `  await expect(page.locator(${aSel})).not.toBeChecked();`
+            : `  await expect(page.locator(${aSel})).toBeChecked();`;
+        case 'value':
+          return `  await expect(page.locator(${aSel})).toHaveValue('${expected}');`;
+        case 'attribute': {
+          const [attrName, attrVal] = expected.split('=');
+          return `  await expect(page.locator(${aSel})).toHaveAttribute('${attrName ?? ''}', '${attrVal ?? ''}');`;
+        }
+        case 'count':
+          return `  await expect(page.locator(${aSel})).toHaveCount(${parseInt(expected) || 1});`;
+        case 'screenshot':
+          return `  await expect(page).toHaveScreenshot();`;
+        default:
+          return `  await expect(page.locator(${aSel})).toBeVisible();`;
+      }
+    }
+
+    case 'screenshot':
+      return `  await page.screenshot({ path: 'screenshot.png', fullPage: true });`;
+
+    // ── Advanced ──────────────────────────────────────────────────
+    case 'wait': {
+      const val = s.value ?? '';
+      const ms  = parseInt(val);
+      if (!isNaN(ms) && ms > 0) {
+        return `  await page.waitForTimeout(${ms});`;
+      }
+      if (val && (val.startsWith('#') || val.startsWith('.') || val.startsWith('[') || val.startsWith('//'))) {
+        return `  await page.waitForSelector('${val}', { timeout: ${timeout} });`;
+      }
+      return `  await page.waitForTimeout(${val || 1000});`;
+    }
+
+    case 'evaluate':
+      return `  await page.evaluate(() => { ${s.evaluateScript ?? '/* your JS here */'} });`;
+
+    case 'frame': {
+      const frameSel = s.frameSelector ?? 'iframe';
+      const innerSel = s.value ?? 'button';
+      return [
+        `  const frame = page.frameLocator('${frameSel}');`,
+        `  await frame.locator('${innerSel}').click();`,
+      ].join('\n');
+    }
+
+    case 'setviewport':
+      return `  await page.setViewportSize({ width: ${s.viewportWidth ?? 1280}, height: ${s.viewportHeight ?? 720} });`;
+
+    // ── Network ───────────────────────────────────────────────────
+    case 'networkrequest': {
+      const pattern = s.value ?? '**/api/**';
+      return `  await page.waitForResponse(resp => resp.url().includes('${pattern}') && resp.status() === 200, { timeout: ${timeout} });`;
+    }
+
+    case 'mockresponse': {
+      const body = s.mockBody ? s.mockBody.trim() : '{}';
+      return [
+        `  await page.route('${s.mockUrl ?? '**/*'}', route => route.fulfill({`,
+        `    status: ${s.mockStatus ?? 200},`,
+        `    contentType: 'application/json',`,
+        `    body: JSON.stringify(${body}),`,
+        `  }));`,
+      ].join('\n');
+    }
+
+    case 'cookie':
+      return [
+        `  await page.context().addCookies([{`,
+        `    name: '${s.cookieName ?? 'session'}',`,
+        `    value: '${s.cookieValue ?? ''}',`,
+        `    url: '${baseUrl}',`,
+        `  }]);`,
+      ].join('\n');
+
+    case 'localstorage':
+      return `  await page.evaluate(() => localStorage.setItem('${s.storageKey ?? 'key'}', '${s.storageValue ?? ''}'));`;
+
+    default:
+      return `  // TODO: ${s.label ?? s.action}`;
+  }
+}
+
 function getVSCodeAPI(): VSCodeAPI {
   if (_vscode) return _vscode;
 
@@ -51,12 +251,8 @@ function getVSCodeAPI(): VSCodeAPI {
       if (message.type === 'GET_FLOWS') {
         const flows = getSavedFlows();
         const summaries = Object.values(flows).map((f: any) => ({
-          id: f.id,
-          name: f.name,
-          description: f.description ?? '',
-          updatedAt: f.updatedAt,
-          stepCount: f.steps?.length ?? 0,
-          tags: f.tags ?? [],
+          id: f.id, name: f.name, description: f.description ?? '',
+          updatedAt: f.updatedAt, stepCount: f.steps?.length ?? 0, tags: f.tags ?? [],
         }));
         setTimeout(() => {
           window.postMessage({ type: 'FLOWS_LIST', payload: summaries }, '*');
@@ -68,15 +264,12 @@ function getVSCodeAPI(): VSCodeAPI {
         const id = message.payload as string;
         const flows = getSavedFlows();
         const flow = flows[id];
-        if (flow) {
-          setTimeout(() => {
-            window.postMessage({ type: 'FLOW_LOADED', payload: flow }, '*');
-          }, 150);
-        } else {
-          setTimeout(() => {
-            window.postMessage({ type: 'ERROR', payload: 'Flow not found' }, '*');
-          }, 150);
-        }
+        setTimeout(() => {
+          window.postMessage({
+            type: flow ? 'FLOW_LOADED' : 'ERROR',
+            payload: flow ?? 'Flow not found',
+          }, '*');
+        }, 150);
       }
 
       // ── DELETE_FLOW ────────────────────────────────────────────
@@ -105,90 +298,94 @@ function getVSCodeAPI(): VSCodeAPI {
       // ── GENERATE_TEST ──────────────────────────────────────────
       if (message.type === 'GENERATE_TEST') {
         const { flow, options } = message.payload ?? {};
-        const steps: any[] = flow?.steps ?? [];
-        const browser = options?.browserType ?? 'chromium';
-        const headless = options?.headless ?? true;
-        const timeout = options?.timeout ?? 30000;
-        const baseUrl = flow?.baseUrl ?? 'https://example.com';
-        const flowName = flow?.name ?? 'Untitled Flow';
+        const steps: any[]    = flow?.steps ?? [];
+        const browser         = options?.browserType ?? 'chromium';
+        const headless        = options?.headless ?? true;
+        const timeout         = options?.timeout ?? 30000;
+        const retries         = options?.retries ?? 0;
+        const baseUrl         = flow?.baseUrl && flow.baseUrl !== 'https://' ? flow.baseUrl : 'https://example.com';
+        const flowName        = flow?.name ?? 'Untitled Flow';
+        const includeComments = options?.includeComments ?? true;
 
         const stepLines = steps
           .filter((s: any) => s.enabled !== false)
           .map((s: any) => {
-            const selector = s.selector ? `'${s.selector}'` : "'[data-testid=\"element\"]'";
-            switch (s.action) {
-              case 'visit':      return `  await page.goto('${s.url ?? s.value ?? baseUrl}');`;
-              case 'click':      return `  await page.click(${selector});`;
-              case 'fill':       return `  await page.fill(${selector}, '${s.value ?? ''}');`;
-              case 'type':       return `  await page.type(${selector}, '${s.value ?? ''}');`;
-              case 'assert':     return `  await expect(page.locator(${selector ?? "'body'"})).toBeVisible();`;
-              case 'wait':       return `  await page.waitForTimeout(${s.value ?? 1000});`;
-              case 'hover':      return `  await page.hover(${selector});`;
-              case 'press':      return `  await page.press(${selector}, '${s.key ?? s.value ?? 'Enter'}');`;
-              case 'select':     return `  await page.selectOption(${selector}, '${s.value ?? ''}');`;
-              case 'check':      return `  await page.check(${selector});`;
-              case 'uncheck':    return `  await page.uncheck(${selector});`;
-              case 'screenshot': return `  await page.screenshot({ path: 'screenshot.png' });`;
-              case 'reload':     return `  await page.reload();`;
-              case 'goback':     return `  await page.goBack();`;
-              case 'goforward':  return `  await page.goForward();`;
-              case 'dblclick':   return `  await page.dblclick(${selector});`;
-              case 'clear':      return `  await page.fill(${selector}, '');`;
-              case 'focus':      return `  await page.focus(${selector});`;
-              case 'scroll':     return `  await page.evaluate(() => window.scrollBy(${s.scrollX ?? 0}, ${s.scrollY ?? 0}));`;
-              case 'evaluate':   return `  await page.evaluate(() => { ${s.evaluateScript ?? ''} });`;
-              default:           return `  // Step: ${s.label ?? s.action}`;
-            }
+            const code    = generateStepCode(s, baseUrl);
+            const comment = includeComments && s.comment ? `  // ${s.comment}\n` : '';
+            const label   = includeComments ? `  // Step: ${s.label ?? s.action}\n` : '';
+            return `${label}${comment}${code}`;
           })
-          .join('\n');
+          .join('\n\n');
+
+        const hasRoute    = steps.some(s => s.action === 'mockresponse');
+        const needsExpect = steps.some(s => s.action === 'assert');
+        const imports     = [
+          `import { test${needsExpect ? ', expect' : ''} } from '@playwright/test';`,
+        ].join('\n');
 
         const code = [
-          `import { test, expect } from '@playwright/test';`,
+          imports,
           ``,
-          `// Generated from: ${flowName}`,
+          `// Generated by Playwright Test Builder`,
+          `// Flow: ${flowName}`,
           `// Browser: ${browser} | Headless: ${headless} | Timeout: ${timeout}ms`,
+          retries > 0 ? `// Retries: ${retries}` : null,
           ``,
           `test.describe('${flowName}', () => {`,
+          `  test.use({ baseURL: '${baseUrl}' });`,
+          ``,
           `  test('should complete the flow', async ({ page }) => {`,
           `    page.setDefaultTimeout(${timeout});`,
+          ``,
           stepLines || `    // No steps defined`,
           `  });`,
           `});`,
-        ].join('\n');
+        ].filter(l => l !== null).join('\n');
 
         setTimeout(() => {
           window.postMessage({
             type: 'TEST_GENERATED',
-            payload: { success: true, path: `${(flowName).replace(/[^a-zA-Z0-9]/g,'_').toLowerCase()}.spec.ts`, code }
+            payload: {
+              success: true,
+              path: `${flowName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}.spec.ts`,
+              code,
+            },
           }, '*');
         }, 600);
       }
 
       // ── RUN_TEST ───────────────────────────────────────────────
       if (message.type === 'RUN_TEST') {
-        const flow = message.payload as any;
-        const steps: any[] = flow?.steps ?? [];
-        const safeName = (flow?.name ?? 'untitled').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        const enabledSteps = steps.filter((s: any) => s.enabled !== false);
+        const flow          = message.payload as any;
+        const steps: any[]  = flow?.steps ?? [];
+        const safeName      = (flow?.name ?? 'untitled').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+        const enabledSteps  = steps.filter((s: any) => s.enabled !== false);
+        const baseUrl       = flow?.baseUrl && flow.baseUrl !== 'https://' ? flow.baseUrl : '';
 
         const logs: Array<{ delay: number; type: string; message: string }> = [
           { delay: 100,  type: 'info',    message: `▶  Running: ${safeName}.spec.ts` },
-          { delay: 400,  type: 'info',    message: `Browser: chromium (headless)` },
-          { delay: 700,  type: 'info',    message: `Launching browser…` },
-          ...enabledSteps.map((s: any, i: number) => ({
-            delay: 900 + i * 700,
-            type: 'step',
-            message: `[${i + 1}/${enabledSteps.length}] ${s.label ?? s.action} (${s.action})`,
-          })),
+          { delay: 350,  type: 'info',    message: `Browser: chromium (headless)` },
+          { delay: 600,  type: 'info',    message: `Launching browser…` },
+          ...enabledSteps.map((s: any, i: number) => {
+            // Show URL in label for visit steps
+            const displayLabel = s.action === 'visit'
+              ? (s.url ?? s.value ?? baseUrl ?? 'page')
+              : (s.label ?? s.action);
+            return {
+              delay: 850 + i * 650,
+              type: 'step',
+              message: `[${i + 1}/${enabledSteps.length}] ${displayLabel} (${s.action})`,
+            };
+          }),
           {
-            delay: 900 + enabledSteps.length * 700 + 300,
+            delay: 850 + enabledSteps.length * 650 + 250,
             type: 'success',
-            message: '✓  All steps passed',
+            message: `✓  All ${enabledSteps.length} step${enabledSteps.length !== 1 ? 's' : ''} passed`,
           },
           {
-            delay: 900 + enabledSteps.length * 700 + 600,
+            delay: 850 + enabledSteps.length * 650 + 500,
             type: 'info',
-            message: `1 passed (1)`,
+            message: `${enabledSteps.length} passed (${Math.round(enabledSteps.length * 0.65 + 1.2)}s)`,
           },
         ];
 
@@ -200,7 +397,7 @@ function getVSCodeAPI(): VSCodeAPI {
 
         setTimeout(() => {
           window.postMessage({ type: 'TEST_RUN_COMPLETE', payload: { passed: true } }, '*');
-        }, 900 + enabledSteps.length * 700 + 900);
+        }, 850 + enabledSteps.length * 650 + 900);
       }
     },
     getState: () => null,
@@ -213,6 +410,6 @@ function getVSCodeAPI(): VSCodeAPI {
 
 export const vscode = {
   postMessage: (message: unknown) => getVSCodeAPI().postMessage(message),
-  getState: () => getVSCodeAPI().getState(),
-  setState: (state: unknown) => getVSCodeAPI().setState(state),
+  getState:    () => getVSCodeAPI().getState(),
+  setState:    (state: unknown) => getVSCodeAPI().setState(state),
 };
