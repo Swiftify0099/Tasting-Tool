@@ -2,7 +2,6 @@ import React, { createContext, useContext, useReducer, useCallback, useEffect } 
 import { TestFlow, TestStep, FlowSummary, GeneratorOptions } from '../types';
 import { useVSCode, useVSCodeListener } from '../hooks/useVSCode';
 
-// ── Helpers ────────────────────────────────────────────────
 function uuid(): string {
   return `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -37,7 +36,6 @@ const DEFAULT_OPTIONS: GeneratorOptions = {
   videoOnFailure: false,
 };
 
-// ── State ──────────────────────────────────────────────────
 interface FlowState {
   currentFlow: TestFlow;
   savedFlows: FlowSummary[];
@@ -54,6 +52,7 @@ type Action =
   | { type: 'NEW_FLOW' }
   | { type: 'UPDATE_FLOW'; patch: Partial<TestFlow> }
   | { type: 'ADD_STEP'; step: TestStep }
+  | { type: 'IMPORT_STEPS'; steps: TestStep[] }
   | { type: 'UPDATE_STEP'; id: string; patch: Partial<TestStep> }
   | { type: 'REMOVE_STEP'; id: string }
   | { type: 'MOVE_STEP'; from: number; to: number }
@@ -75,7 +74,16 @@ function reducer(state: FlowState, action: Action): FlowState {
     case 'SET_FLOW':       return { ...state, currentFlow: action.flow, selectedStepId: null };
     case 'NEW_FLOW':       return { ...state, currentFlow: newFlow(), selectedStepId: null, generatedCode: '' };
     case 'UPDATE_FLOW':    return { ...state, currentFlow: { ...state.currentFlow, ...action.patch } };
-    case 'ADD_STEP':       return { ...state, currentFlow: { ...state.currentFlow, steps: [...state.currentFlow.steps, action.step] }, selectedStepId: action.step.id };
+    case 'ADD_STEP':       return {
+      ...state,
+      currentFlow: { ...state.currentFlow, steps: [...state.currentFlow.steps, action.step] },
+      selectedStepId: action.step.id,
+    };
+    case 'IMPORT_STEPS':   return {
+      ...state,
+      currentFlow: { ...state.currentFlow, steps: [...state.currentFlow.steps, ...action.steps] },
+      selectedStepId: action.steps.length > 0 ? action.steps[action.steps.length - 1].id : state.selectedStepId,
+    };
     case 'UPDATE_STEP':    return { ...state, currentFlow: { ...state.currentFlow, steps: state.currentFlow.steps.map(s => s.id === action.id ? { ...s, ...action.patch } : s) } };
     case 'REMOVE_STEP':    return { ...state, currentFlow: { ...state.currentFlow, steps: state.currentFlow.steps.filter(s => s.id !== action.id) }, selectedStepId: state.selectedStepId === action.id ? null : state.selectedStepId };
     case 'MOVE_STEP': {
@@ -107,10 +115,10 @@ function reducer(state: FlowState, action: Action): FlowState {
   }
 }
 
-// ── Context ────────────────────────────────────────────────
 interface FlowContextValue {
   state: FlowState;
   addStep: (action: import('../types').ActionType) => void;
+  importSteps: (steps: Partial<TestStep>[]) => void;
   updateStep: (id: string, patch: Partial<TestStep>) => void;
   removeStep: (id: string) => void;
   moveStep: (from: number, to: number) => void;
@@ -148,7 +156,6 @@ export function FlowProvider({ children }: { children: React.ReactNode }) {
 
   const { postMessage } = useVSCode();
 
-  // Listen for messages from extension
   useVSCodeListener('FLOW_SAVED', () => {
     dispatch({ type: 'SET_SAVING', val: false });
     dispatch({ type: 'SHOW_TOAST', message: 'Flow saved!', kind: 'success' });
@@ -182,14 +189,12 @@ export function FlowProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'SHOW_TOAST', message: `Error: ${payload}`, kind: 'error' });
   });
 
-  // Auto-clear toast
   useEffect(() => {
     if (!state.toast) return;
     const t = setTimeout(() => dispatch({ type: 'CLEAR_TOAST' }), 3500);
     return () => clearTimeout(t);
   }, [state.toast]);
 
-  // Load flows on mount
   useEffect(() => { postMessage('GET_FLOWS'); }, []);
 
   const ACTION_LABELS: Record<string, string> = {
@@ -213,6 +218,25 @@ export function FlowProvider({ children }: { children: React.ReactNode }) {
       timeout: 5000,
     };
     dispatch({ type: 'ADD_STEP', step });
+  }, []);
+
+  const importSteps = useCallback((steps: Partial<TestStep>[]) => {
+    const fullSteps: TestStep[] = steps.map((s, i) => ({
+      id: `ai_step_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      action: (s.action ?? 'click') as import('../types').ActionType,
+      label: s.label ?? ACTION_LABELS[s.action ?? 'click'] ?? s.action ?? `Step ${i + 1}`,
+      enabled: true,
+      timeout: 5000,
+      selector: s.selector ?? '',
+      value: s.value ?? '',
+      url: s.url ?? '',
+      key: s.key,
+      assertType: s.assertType,
+      assertSelector: s.assertSelector,
+      assertExpected: s.assertExpected,
+      comment: s.comment ?? 'AI generated',
+    }));
+    dispatch({ type: 'IMPORT_STEPS', steps: fullSteps });
   }, []);
 
   const updateStep = useCallback((id: string, patch: Partial<TestStep>) => {
@@ -293,7 +317,7 @@ export function FlowProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <FlowContext.Provider value={{
-      state, addStep, updateStep, removeStep, moveStep, duplicateStep,
+      state, addStep, importSteps, updateStep, removeStep, moveStep, duplicateStep,
       toggleStep, selectStep, updateFlow, newFlow: handleNewFlow,
       saveFlow, loadFlow, deleteFlow, generateTest, runTest,
       setOptions, clearSteps, reorderSteps, showToast, exportJson, selectedStep,

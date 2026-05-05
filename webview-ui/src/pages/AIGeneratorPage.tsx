@@ -27,7 +27,7 @@ const EXAMPLE_PROMPTS = [
 ];
 
 export default function AIGeneratorPage() {
-  const { state, addStep, updateStep, updateFlow, showToast } = useFlow();
+  const { state, importSteps, updateFlow, showToast } = useFlow();
   const navigate = useNavigate();
 
   // AI Config state
@@ -102,26 +102,8 @@ export default function AIGeneratorPage() {
       const steps = parseAISteps(res.code);
       if (steps.length > 0) {
         addLog(`Parsed ${steps.length} step(s) from AI response`, 'success');
-        steps.forEach((s, i) => {
-          addStep(s.action as import('../types').ActionType ?? 'click');
-          addLog(`  [${i+1}] ${s.action}: ${s.label}`, 'ai');
-        });
-        // Update labels/selectors on generated steps
-        const newSteps = state.currentFlow.steps.slice(-(steps.length));
-        steps.forEach((aiStep, i) => {
-          if (newSteps[i]) {
-            updateStep(newSteps[i].id, {
-              label: aiStep.label ?? newSteps[i].label,
-              selector: aiStep.selector ?? '',
-              value: aiStep.value ?? '',
-              url: aiStep.url ?? '',
-              assertType: aiStep.assertType,
-              assertSelector: aiStep.assertSelector,
-              assertExpected: aiStep.assertExpected,
-              comment: 'AI generated',
-            });
-          }
-        });
+        steps.forEach((s, i) => addLog(`  [${i+1}] ${s.action}: ${s.label}`, 'ai'));
+        importSteps(steps);
         addLog('✅ Steps added to canvas!', 'success');
         showToast(`${steps.length} steps added to canvas`, 'success');
       } else {

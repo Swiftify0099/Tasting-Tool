@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useFlow } from '../context/FlowContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useVSCodeListener } from '../hooks/useVSCode';
 import {
   Play, Terminal, CheckCircle, XCircle, Clock, Zap,
@@ -202,6 +202,7 @@ function SimBrowser({
 export default function RunnerPage() {
   const { state, generateTest, runTest } = useFlow();
   const navigate = useNavigate();
+  const location = useLocation();
   const { currentFlow } = state;
 
   const [logs, setLogs]         = useState<RunLog[]>([]);
@@ -212,6 +213,7 @@ export default function RunnerPage() {
   const [activeAction, setActiveAction]   = useState('');
   const [activeLabel, setActiveLabel]     = useState('');
   const logEndRef = useRef<HTMLDivElement>(null);
+  const autoRunFired = useRef(false);
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
 
@@ -221,7 +223,6 @@ export default function RunnerPage() {
   useVSCodeListener('TEST_RUN_LOG', (payload) => {
     const p = payload as { logType: string; message: string };
     const tm: Record<string,RunLog['type']> = { info:'info', success:'success', error:'error', step:'step' };
-    // Auto-activate running state when navigated from GeneratorPage
     setRunning(true);
     setStatus(prev => prev === 'idle' ? 'running' : prev);
     pushLog(p.message, tm[p.logType] ?? 'info');
@@ -257,6 +258,15 @@ export default function RunnerPage() {
   };
 
   const handleClear = () => { setLogs([]); setStatus('idle'); setRunning(false); setActiveStepIdx(null); setActiveAction(''); };
+
+  // Auto-run when navigated from Builder's Run button — must be after handleGenAndRun
+  useEffect(() => {
+    const loc = location as any;
+    if (loc?.state?.autoRun && !autoRunFired.current && currentFlow.steps.length > 0) {
+      autoRunFired.current = true;
+      setTimeout(() => handleGenAndRun(), 150);
+    }
+  }, []);
 
   const logColors: Record<RunLog['type'],string> = { info:'text-slate-400', success:'text-emerald-400', error:'text-red-400', step:'text-indigo-300' };
   const logPfx: Record<RunLog['type'],string>    = { info:'ℹ', success:'✓', error:'✗', step:'→' };

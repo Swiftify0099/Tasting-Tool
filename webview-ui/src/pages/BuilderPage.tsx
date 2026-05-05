@@ -55,6 +55,14 @@ export default function BuilderPage() {
     navigate('/generator');
   };
 
+  const handleRun = () => {
+    if (currentFlow.steps.length === 0) {
+      showToast('Add at least one step before running', 'error');
+      return;
+    }
+    navigate('/runner', { state: { autoRun: true } });
+  };
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
 
@@ -145,7 +153,7 @@ export default function BuilderPage() {
           {/* Run */}
           <button
             className="btn-primary text-xs"
-            onClick={() => { handleGenerate(); navigate('/runner'); }}
+            onClick={handleRun}
             disabled={currentFlow.steps.length === 0}
           >
             <Zap className="w-3.5 h-3.5" /> Run
