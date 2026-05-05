@@ -109,113 +109,83 @@ function SimBrowser({
           </div>
         )}
 
-        {/* ── Visit overlay: navigating spinner ── */}
-        {running && activeAction === 'visit' && (
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3">
-            <Loader className="w-10 h-10 text-sky-500 animate-spin" />
-            <p className="text-sm font-semibold text-gray-700">Navigating to page…</p>
-            <p className="text-xs font-mono text-sky-600 bg-sky-50 border border-sky-200 px-3 py-1 rounded max-w-[90%] truncate">{activeLabel || url}</p>
-          </div>
-        )}
-
-        {/* ── Click / hover overlay ── */}
-        {running && (activeAction === 'click' || activeAction === 'hover' || activeAction === 'dblclick') && (
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute" style={{ top: '42%', left: '38%' }}>
-              <MousePointer className="w-8 h-8 drop-shadow-xl" style={{ color }} />
-              {activeAction === 'click' && (
-                <>
-                  <div className="absolute -top-1 -left-1 w-10 h-10 rounded-full border-4 animate-ping opacity-70" style={{ borderColor: color }} />
-                  <div className="absolute -top-3 -left-3 w-14 h-14 rounded-full border-2 animate-ping opacity-30" style={{ borderColor: color, animationDelay: '0.15s' }} />
-                </>
-              )}
+        {/* ── Step action banner (top, non-blocking) ── */}
+        {running && activeAction && (
+          <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
+            <div className="flex items-center gap-2 px-3 py-2 text-white text-xs font-semibold shadow-lg"
+              style={{ background:`${color}ee` }}>
+              {activeAction === 'visit'
+                ? <Loader className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                : activeAction === 'click' || activeAction === 'dblclick'
+                  ? <MousePointer className="w-3.5 h-3.5 flex-shrink-0" />
+                  : <div className="w-2 h-2 rounded-full bg-white animate-pulse flex-shrink-0" />
+              }
+              <span className="flex-shrink-0">{actionText}</span>
+              <span className="opacity-80 font-normal truncate">— {activeLabel}</span>
+              <span className="ml-auto opacity-70 flex-shrink-0 tabular-nums">
+                {stepIdx!==null?`${stepIdx+1}/${totalSteps}`:''}
+              </span>
             </div>
           </div>
         )}
 
-        {/* ── Assert overlay ── */}
+        {/* ── Click ripple overlay (non-blocking, pointer-events-none) ── */}
+        {running && (activeAction === 'click' || activeAction === 'dblclick') && (
+          <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="absolute" style={{ top: '45%', left: '40%' }}>
+              <div className="w-8 h-8 rounded-full border-4 animate-ping opacity-60" style={{ borderColor: color }} />
+              <div className="absolute top-1 left-1 w-6 h-6 rounded-full border-2 animate-ping opacity-40" style={{ borderColor: color, animationDelay: '0.1s' }} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Assert highlight (non-blocking) ── */}
         {running && activeAction === 'assert' && (
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute border-2 rounded-lg animate-pulse"
-              style={{ top:'25%', left:'10%', right:'10%', bottom:'40%', borderColor: color, boxShadow:`0 0 30px ${color}50` }}>
-              <div className="absolute -top-6 left-2 text-[11px] font-bold px-2 py-1 rounded shadow"
-                style={{ background: color, color:'#fff' }}>
-                ✓ ASSERT PASS
-              </div>
-              <div className="absolute inset-0 rounded-lg opacity-10" style={{ background: color }} />
+          <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="absolute border-2 rounded-lg"
+              style={{ top:'20%', left:'8%', right:'8%', bottom:'45%', borderColor: color, boxShadow:`0 0 20px ${color}40` }}>
+              <div className="absolute inset-0 rounded-lg opacity-5" style={{ background: color }} />
             </div>
           </div>
         )}
 
-        {/* ── Fill / type overlay ── */}
-        {running && (activeAction === 'fill' || activeAction === 'type') && (
-          <div className="absolute pointer-events-none" style={{ bottom: '25%', left: '10%', right: '10%' }}>
-            <div className="bg-white/90 border-2 rounded-lg p-2 shadow-xl backdrop-blur-sm" style={{ borderColor: color }}>
-              <div className="text-[10px] text-gray-400 mb-1 font-medium">Typing into input…</div>
-              <div className="flex items-center gap-1 font-mono text-sm text-gray-700">
-                <span>{activeLabel}</span>
-                <span className="animate-pulse" style={{ color }}>|</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Scroll overlay ── */}
+        {/* ── Scroll indicator (non-blocking) ── */}
         {running && activeAction === 'scroll' && (
-          <div className="absolute right-3 top-1/4 bottom-1/4 w-2 bg-gray-200/80 rounded-full pointer-events-none">
+          <div className="absolute right-3 top-1/4 bottom-1/4 w-1.5 bg-gray-300/60 rounded-full pointer-events-none z-10">
             <div className="absolute w-full rounded-full animate-bounce" style={{ height:'30%', top:'30%', background: color }} />
           </div>
         )}
 
-        {/* ── Step badge — shown over screenshot ── */}
-        {running && activeAction && activeAction !== 'visit' && (
-          <div className="absolute top-3 left-3 right-3 flex items-center gap-2 px-3 py-2 rounded-xl text-white text-xs font-semibold shadow-2xl backdrop-blur-sm border"
-            style={{ background:`${color}dd`, borderColor:`${color}80` }}>
-            <div className="w-2 h-2 rounded-full bg-white animate-pulse flex-shrink-0" />
-            <span className="flex-shrink-0">{actionText}</span>
-            <span className="opacity-80 font-normal truncate">— {activeLabel}</span>
-            <span className="ml-auto opacity-70 flex-shrink-0">{stepIdx!==null?`${stepIdx+1}/${totalSteps}`:''}</span>
-          </div>
-        )}
-
-        {/* ── Scan lines ── */}
+        {/* ── Progress bar (bottom, thin) ── */}
         {running && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-400/60 to-transparent animate-pulse" style={{ top: '33%' }} />
-            <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-400/30 to-transparent animate-pulse" style={{ top: '66%', animationDelay:'0.5s' }} />
-          </div>
-        )}
-
-        {/* ── Progress bar ── */}
-        {running && (
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-gray-200/50">
-            <div className="h-full transition-all duration-700 ease-out rounded-r"
+          <div className="absolute bottom-0 left-0 right-0 h-1 z-20 pointer-events-none">
+            <div className="h-full transition-all duration-700 ease-out"
               style={{ width:`${progress}%`, background:`linear-gradient(90deg, #6366f1, ${color})` }} />
           </div>
         )}
 
-        {/* ── Pass overlay ── */}
+        {/* ── Pass banner (top-right badge, NOT full screen) ── */}
         {status === 'passed' && (
-          <div className="absolute inset-0 bg-emerald-500/15 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
-            <div className="w-20 h-20 rounded-full bg-emerald-500 flex items-center justify-center shadow-2xl ring-4 ring-emerald-300/30">
-              <CheckCircle className="w-10 h-10 text-white" />
-            </div>
-            <div className="bg-white/90 backdrop-blur-sm px-6 py-3 rounded-xl shadow-xl text-center">
-              <p className="text-base font-bold text-emerald-700">All Tests Passed!</p>
-              <p className="text-xs text-emerald-600 mt-0.5">{totalSteps} step{totalSteps!==1?'s':''} completed successfully</p>
+          <div className="absolute top-10 right-3 z-30 pointer-events-none">
+            <div className="flex items-center gap-2 bg-emerald-500 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-emerald-400/50">
+              <CheckCircle className="w-5 h-5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold leading-tight">All Tests Passed!</p>
+                <p className="text-[11px] opacity-80">{totalSteps} step{totalSteps!==1?'s':''} completed</p>
+              </div>
             </div>
           </div>
         )}
 
-        {/* ── Fail overlay ── */}
+        {/* ── Fail banner (top-right badge, NOT full screen) ── */}
         {status === 'failed' && (
-          <div className="absolute inset-0 bg-red-500/15 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
-            <div className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-2xl ring-4 ring-red-300/30">
-              <XCircle className="w-10 h-10 text-white" />
-            </div>
-            <div className="bg-white/90 backdrop-blur-sm px-6 py-3 rounded-xl shadow-xl text-center">
-              <p className="text-base font-bold text-red-700">Test Failed</p>
-              <p className="text-xs text-red-500 mt-0.5">Check the terminal log for error details</p>
+          <div className="absolute top-10 right-3 z-30 pointer-events-none">
+            <div className="flex items-center gap-2 bg-red-500 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-red-400/50">
+              <XCircle className="w-5 h-5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold leading-tight">Test Failed</p>
+                <p className="text-[11px] opacity-80">Check terminal for details</p>
+              </div>
             </div>
           </div>
         )}
