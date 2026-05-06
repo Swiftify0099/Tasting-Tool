@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>DemoApp — Playwright Test Builder</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --primary:#6366f1;--primary-d:#4f46e5;--primary-l:#c7d2fe;
+  --success:#22c55e;--warning:#f59e0b;--danger:#ef4444;
+  --bg:#f0f2ff;--surface:#fff;--text:#1e293b;
+  --muted:#64748b;--border:#e2e8f0;--border-focus:#6366f1;
+}
+html{scroll-behavior:smooth}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:200vh}
+
+/* ── NAV ─────────────────────────────── */
+nav{
+  background:white;border-bottom:1px solid var(--border);
+  padding:0 24px;height:56px;display:flex;align-items:center;gap:20px;
+  position:sticky;top:0;z-index:50;box-shadow:0 1px 4px rgba(0,0,0,.06)
+}
+.brand{font-weight:800;font-size:18px;color:var(--primary);letter-spacing:-.5px;white-space:nowrap}
+.nav-links{display:flex;gap:2px;flex:1}
+.nav-links a{text-decoration:none;color:var(--muted);font-size:13.5px;padding:5px 10px;border-radius:6px;transition:all .15s}
+.nav-links a:hover{color:var(--text);background:var(--bg)}
+.nav-links a.active{color:var(--primary);font-weight:600}
+.nav-search{padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;outline:none;width:180px;transition:all .15s}
+.nav-search:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+.nav-actions{display:flex;gap:8px;align-items:center}
+.btn-outline{padding:6px 14px;background:transparent;color:var(--primary);border:1.5px solid var(--primary-l);border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.btn-outline:hover{background:var(--primary);color:white;border-color:var(--primary)}
+.btn-primary{padding:7px 16px;background:var(--primary);color:white;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-primary:hover{background:var(--primary-d)}
+
+/* ── HERO ────────────────────────────── */
+.hero{
+  background:linear-gradient(135deg,#eef2ff 0%,#f0f2ff 50%,#fdf4ff 100%);
+  border-bottom:1px solid #e0e7ff;padding:48px 24px 40px;
+}
+.hero-inner{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr auto;gap:40px;align-items:center}
+.hero h1{font-size:36px;font-weight:800;letter-spacing:-1px;line-height:1.2;color:var(--text)}
+.hero h1 span{color:var(--primary)}
+.hero-sub{margin:12px 0 28px;color:var(--muted);font-size:15px;max-width:420px;line-height:1.6}
+.hero-btns{display:flex;gap:10px;flex-wrap:wrap}
+.hero-cta{padding:12px 22px;background:var(--primary);color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;box-shadow:0 4px 14px rgba(99,102,241,.35)}
+.hero-cta:hover{background:var(--primary-d);transform:translateY(-1px);box-shadow:0 6px 20px rgba(99,102,241,.4)}
+.hero-cta:active{transform:translateY(0)}
+.hero-secondary{padding:12px 22px;background:white;color:var(--text);border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
+.hero-secondary:hover{border-color:var(--primary-l);color:var(--primary)}
+.stats{display:flex;gap:28px;margin-top:36px;padding-top:28px;border-top:1px solid #d4d9f7}
+.stat-val{font-size:26px;font-weight:800;color:var(--primary)}
+.stat-lbl{font-size:11.5px;color:var(--muted);margin-top:1px}
+
+/* ── MAIN CONTENT ────────────────────── */
+.main-wrap{max-width:1100px;margin:0 auto;padding:40px 24px;display:grid;grid-template-columns:1fr 360px;gap:36px}
+
+/* ── FEATURES ────────────────────────── */
+.features-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px}
+.feature-card{background:white;border:1px solid var(--border);border-radius:12px;padding:20px}
+.feature-icon{font-size:24px;margin-bottom:10px}
+.feature-card h3{font-size:14px;font-weight:700;margin-bottom:4px}
+.feature-card p{font-size:12.5px;color:var(--muted);line-height:1.5}
+
+/* ── TABLE ───────────────────────────── */
+.data-table-wrap{background:white;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.table-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.table-header h3{font-size:14px;font-weight:700}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:10px 20px;border-bottom:1px solid var(--border);background:#fafafa}
+td{padding:12px 20px;font-size:13px;border-bottom:1px solid #f1f5f9}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8faff}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
+.badge-green{background:#dcfce7;color:#16a34a}
+.badge-blue{background:#dbeafe;color:#2563eb}
+.badge-orange{background:#ffedd5;color:#ea580c}
+
+/* ── LOGIN CARD ──────────────────────── */
+.login-card{background:white;border:1px solid var(--border);border-radius:16px;padding:28px;box-shadow:0 4px 24px rgba(0,0,0,.07);position:sticky;top:72px}
+.login-card h2{font-size:20px;font-weight:800;margin-bottom:6px}
+.login-card .subtitle{font-size:13px;color:var(--muted);margin-bottom:24px}
+
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:5px;color:#374151}
+.field input,.field select{
+  width:100%;padding:9px 11px;border:1.5px solid var(--border);
+  border-radius:8px;font-size:13.5px;outline:none;
+  transition:all .15s;background:white;color:var(--text)
+}
+.field input:focus,.field select:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+.field input::placeholder{color:#9ca3af}
+
+.checkbox-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin:6px 0 18px;cursor:pointer}
+.checkbox-row input[type=checkbox]{width:15px;height:15px;accent-color:var(--primary);cursor:pointer}
+
+.submit-btn{
+  width:100%;padding:11px;background:var(--primary);color:white;
+  border:none;border-radius:8px;font-size:14px;font-weight:700;
+  cursor:pointer;transition:all .15s;letter-spacing:.01em
+}
+.submit-btn:hover{background:var(--primary-d)}
+.submit-btn:active{transform:scale(.99)}
+.submit-btn:disabled{opacity:.7;cursor:not-allowed}
+
+.divider-line{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--muted);font-size:12px}
+.divider-line::before,.divider-line::after{content:'';flex:1;height:1px;background:var(--border)}
+
+.social-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+.social-btn{padding:8px;background:white;border:1.5px solid var(--border);border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.social-btn:hover{border-color:#d1d5db;background:#f9fafb}
+
+.signup-link{text-align:center;font-size:12.5px;color:var(--muted)}
+.signup-link a{color:var(--primary);text-decoration:none;font-weight:600}
+.signup-link a:hover{text-decoration:underline}
+
+/* ── FOOTER ──────────────────────────── */
+footer{background:white;border-top:1px solid var(--border);padding:32px 24px;margin-top:40px}
+.footer-inner{max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center}
+.footer-links{display:flex;gap:20px}
+.footer-links a{text-decoration:none;color:var(--muted);font-size:13px}
+.footer-links a:hover{color:var(--text)}
+.footer-copy{font-size:12.5px;color:#94a3b8}
+
+/* ── PLAYWRIGHT INTERACTION CLASSES ──── */
+.pw-highlight{
+  outline:3px solid #6366f1!important;
+  outline-offset:2px!important;
+  box-shadow:0 0 0 6px rgba(99,102,241,.18)!important;
+  transition:outline .15s,box-shadow .15s!important
+}
+.pw-typing{
+  border-color:#22c55e!important;
+  box-shadow:0 0 0 3px rgba(34,197,94,.18)!important
+}
+.pw-success-fill{
+  border-color:#22c55e!important;
+  background:rgba(34,197,94,.04)!important
+}
+.pw-hover{
+  outline:2px dashed rgba(99,102,241,.6)!important;
+  outline-offset:3px!important
+}
+@keyframes pw-click-anim{0%,100%{transform:scale(1)}45%{transform:scale(.96)}}
+.pw-clicked{animation:pw-click-anim .3s ease!important}
+@keyframes pw-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+</style>
+</head>
+<body>
+
+<!-- ── NAVIGATION ─────────────────────── -->
+<nav id="navbar">
+  <div class="brand">🎭 DemoApp</div>
+  <div class="nav-links">
+    <a href="#" class="active" data-testid="nav-home">Home</a>
+    <a href="#features" data-testid="nav-features">Features</a>
+    <a href="#pricing" data-testid="nav-pricing">Pricing</a>
+    <a href="#docs" data-testid="nav-docs">Docs</a>
+    <a href="#contact" data-testid="nav-contact">Contact</a>
+  </div>
+  <div class="nav-actions">
+    <input type="search" class="nav-search" id="search-input" data-testid="search" placeholder="Search docs…"/>
+    <button class="btn-outline" data-testid="nav-login" onclick="alert('Login clicked!')">Log in</button>
+    <button class="btn-primary" data-testid="nav-signup">Sign up free</button>
+  </div>
+</nav>
+
+<!-- ── HERO ────────────────────────────── -->
+<div class="hero">
+  <div class="hero-inner">
+    <div>
+      <h1 data-testid="hero-title">Test smarter with<br><span>Playwright Builder</span></h1>
+      <p class="hero-sub">Build reliable end-to-end tests visually. No code required. Ship with confidence every time.</p>
+      <div class="hero-btns">
+        <button class="hero-cta" data-testid="hero-cta" onclick="this.textContent='🚀 Starting…';setTimeout(()=>this.textContent='Start Testing Free →',1500)">Start Testing Free →</button>
+        <button class="hero-secondary" data-testid="hero-demo">Watch demo</button>
+      </div>
+      <div class="stats">
+        <div><div class="stat-val" data-testid="stat-users">12k+</div><div class="stat-lbl">Active users</div></div>
+        <div><div class="stat-val" data-testid="stat-tests">1.2M</div><div class="stat-lbl">Tests run daily</div></div>
+        <div><div class="stat-val" data-testid="stat-pass">99.9%</div><div class="stat-lbl">Pass rate</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MAIN CONTENT ───────────────────── -->
+<div class="main-wrap">
+
+  <!-- Left: features + table -->
+  <div>
+    <div id="features" class="features-grid">
+      <div class="feature-card" data-testid="feature-speed">
+        <div class="feature-icon">⚡</div>
+        <h3>Lightning fast</h3>
+        <p>Run thousands of tests in parallel across browsers with zero configuration.</p>
+      </div>
+      <div class="feature-card" data-testid="feature-visual">
+        <div class="feature-icon">🎨</div>
+        <h3>Visual builder</h3>
+        <p>Drag-and-drop test flows without writing a single line of code manually.</p>
+      </div>
+      <div class="feature-card" data-testid="feature-reports">
+        <div class="feature-icon">📊</div>
+        <h3>Rich reports</h3>
+        <p>Detailed logs, screenshots and video recordings for every test run.</p>
+      </div>
+      <div class="feature-card" data-testid="feature-ci">
+        <div class="feature-icon">🔄</div>
+        <h3>CI/CD ready</h3>
+        <p>Integrates with GitHub Actions, GitLab CI, Jenkins and more out of the box.</p>
+      </div>
+    </div>
+
+    <div class="data-table-wrap">
+      <div class="table-header">
+        <h3>Recent test runs</h3>
+        <button class="btn-outline" data-testid="btn-refresh" onclick="this.textContent='↻ Refreshed!';setTimeout(()=>this.textContent='↻ Refresh',1200)">↻ Refresh</button>
+      </div>
+      <table id="test-table">
+        <thead>
+          <tr><th>Test suite</th><th>Status</th><th>Duration</th><th>Steps</th></tr>
+        </thead>
+        <tbody>
+          <tr data-testid="row-login">
+            <td>Login flow</td>
+            <td><span class="badge badge-green">Passed</span></td>
+            <td>1.2s</td><td>8</td>
+          </tr>
+          <tr data-testid="row-checkout">
+            <td>Checkout flow</td>
+            <td><span class="badge badge-blue">Running</span></td>
+            <td>—</td><td>14</td>
+          </tr>
+          <tr data-testid="row-signup">
+            <td>Signup flow</td>
+            <td><span class="badge badge-orange">Queued</span></td>
+            <td>—</td><td>6</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right: login form -->
+  <div>
+    <div class="login-card" id="login-card">
+      <h2>Sign in</h2>
+      <p class="subtitle">New here? <a href="#" data-testid="signup-link">Create a free account</a></p>
+
+      <div class="social-btns">
+        <button class="social-btn" data-testid="btn-google">🌐 Google</button>
+        <button class="social-btn" data-testid="btn-github">🐙 GitHub</button>
+      </div>
+      <div class="divider-line">or sign in with email</div>
+
+      <form id="login-form" onsubmit="handleLoginSubmit(event)">
+        <div class="field">
+          <label for="email">Email address</label>
+          <input type="email" id="email" name="email" data-testid="email"
+            placeholder="you@example.com" autocomplete="off"/>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" data-testid="password"
+            placeholder="••••••••" autocomplete="off"/>
+        </div>
+        <div class="field">
+          <label for="role">Your role</label>
+          <select id="role" name="role" data-testid="role">
+            <option value="">Select role…</option>
+            <option value="developer">Developer</option>
+            <option value="qa">QA Engineer</option>
+            <option value="manager">Engineering Manager</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="remember" name="remember" data-testid="remember"/>
+          Keep me signed in for 30 days
+        </label>
+        <button type="submit" class="submit-btn" id="login-btn" data-testid="login-btn">
+          Sign in
+        </button>
+      </form>
+
+      <p class="signup-link" style="margin-top:14px">
+        <a href="#" data-testid="forgot-link">Forgot password?</a>
+        &nbsp;·&nbsp;
+        <a href="#" data-testid="help-link">Help</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ── FOOTER ─────────────────────────── -->
+<footer id="footer">
+  <div class="footer-inner">
+    <div class="brand">🎭 DemoApp</div>
+    <div class="footer-links">
+      <a href="#" data-testid="footer-privacy">Privacy</a>
+      <a href="#" data-testid="footer-terms">Terms</a>
+      <a href="#" data-testid="footer-status">Status</a>
+      <a href="#" data-testid="footer-blog">Blog</a>
+    </div>
+    <div class="footer-copy">© 2025 DemoApp Inc. — Playwright Test Builder preview</div>
+  </div>
+</footer>
+
+<script>
+/* ── Form handler ─────────────────────── */
+function handleLoginSubmit(e) {
+  e.preventDefault();
+  var btn = document.getElementById('login-btn');
+  var email = document.getElementById('email').value;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  btn.style.opacity = '.8';
+  setTimeout(function() {
+    if (email) {
+      btn.textContent = '✓ Signed in!';
+      btn.style.background = '#22c55e';
+      btn.style.opacity = '1';
+    } else {
+      btn.textContent = '⚠ Enter your email';
+      btn.style.background = '#f59e0b';
+      btn.style.opacity = '1';
+    }
+    setTimeout(function() {
+      btn.textContent = 'Sign in';
+      btn.disabled = false;
+      btn.style.background = '';
+      btn.style.opacity = '';
+    }, 2000);
+  }, 900);
+}
+
+/* ── Playwright interaction API ──────── */
+/* These functions are called by RunnerPage to simulate test actions */
+
+window.pwHighlight = function(sel, type) {
+  try {
+    var el = resolve(sel);
+    if (!el) return false;
+    clearPw(el);
+    el.classList.add('pw-highlight');
+    if (type === 'click') {
+      setTimeout(function() {
+        el.classList.add('pw-clicked');
+        el.classList.remove('pw-highlight');
+        setTimeout(function() { el.classList.remove('pw-clicked'); }, 400);
+      }, 200);
+    } else if (type === 'hover') {
+      el.classList.add('pw-hover');
+      setTimeout(function() { el.classList.remove('pw-hover'); }, 1000);
+    }
+    return true;
+  } catch(e) { return false; }
+};
+
+window.pwFill = function(sel, value) {
+  try {
+    var el = resolve(sel);
+    if (!el || el.tagName === 'SELECT') return false;
+    el.focus();
+    el.classList.add('pw-highlight');
+    el.value = '';
+    var chars = String(value).split('');
+    var i = 0;
+    var delay = chars.length > 0 ? Math.max(25, Math.min(80, 500 / chars.length)) : 50;
+    var timer = setInterval(function() {
+      if (i >= chars.length) {
+        clearInterval(timer);
+        el.classList.remove('pw-highlight');
+        el.classList.add('pw-typing');
+        setTimeout(function() {
+          el.classList.remove('pw-typing');
+          el.classList.add('pw-success-fill');
+          setTimeout(function() { el.classList.remove('pw-success-fill'); }, 800);
+        }, 200);
+        return;
+      }
+      el.value += chars[i++];
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+    }, delay);
+    return true;
+  } catch(e) { return false; }
+};
+
+window.pwSelect = function(sel, value) {
+  try {
+    var el = resolve(sel);
+    if (!el) return false;
+    el.classList.add('pw-highlight');
+    setTimeout(function() {
+      el.value = value;
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+      el.classList.remove('pw-highlight');
+      el.classList.add('pw-success-fill');
+      setTimeout(function() { el.classList.remove('pw-success-fill'); }, 700);
+    }, 380);
+    return true;
+  } catch(e) { return false; }
+};
+
+window.pwCheck = function(sel, checked) {
+  try {
+    var el = resolve(sel);
+    if (!el) return false;
+    el.classList.add('pw-highlight');
+    setTimeout(function() {
+      el.checked = checked !== false;
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+      el.classList.remove('pw-highlight');
+    }, 300);
+    return true;
+  } catch(e) { return false; }
+};
+
+window.pwClear = function(sel) {
+  try {
+    var el = resolve(sel);
+    if (!el) return false;
+    el.classList.add('pw-highlight');
+    setTimeout(function() {
+      el.value = '';
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.classList.remove('pw-highlight');
+    }, 300);
+    return true;
+  } catch(e) { return false; }
+};
+
+function resolve(sel) {
+  if (!sel || sel === '[data-testid="element"]') return null;
+  return document.querySelector(sel);
+}
+
+function clearPw(el) {
+  el.classList.remove('pw-highlight','pw-clicked','pw-hover','pw-typing','pw-success-fill');
+}
+</script>
+</body>
+</html>

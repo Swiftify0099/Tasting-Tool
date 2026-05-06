@@ -32,6 +32,8 @@ function normalizeUrl(raw: string): string {
   return 'https://' + raw;
 }
 
+const DEMO_PAGE = '/demo.html';
+
 function SimBrowser({
   url, running, status, activeAction, activeLabel, stepIdx, totalSteps,
   iframeRef, onLoad, scrollOffset, scrollDir,
@@ -47,86 +49,46 @@ function SimBrowser({
   const color      = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actionText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
   const progress   = stepIdx !== null ? ((stepIdx + 1) / totalSteps) * 100 : 0;
-  const hasUrl     = !!url;
   const offset     = scrollOffset ?? 0;
-  // Max virtual scroll height we support
   const SCROLL_BUFFER = 2000;
+
+  // Use demo page when no URL is configured — it's same-origin so real interactions work
+  const isDemo     = !url;
+  const effectiveUrl = url || DEMO_PAGE;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 relative overflow-hidden bg-white">
 
-        {/* ── Live Website Iframe — taller than container so translateY reveals below-fold content ── */}
-        {hasUrl && (
-          <div className="absolute inset-0 overflow-hidden">
-            <iframe
-              ref={iframeRef}
-              key={url}
-              src={url}
-              className="absolute top-0 left-0 w-full border-0"
-              style={{
-                height: `calc(100% + ${SCROLL_BUFFER}px)`,
-                transform: `translateY(-${Math.max(0, Math.min(offset, SCROLL_BUFFER))}px)`,
-                transition: activeAction === 'scroll' ? 'transform 0.85s cubic-bezier(0.4,0,0.2,1)' : 'transform 0.3s ease-out',
-                willChange: 'transform',
-              }}
-              title="Live Browser Preview"
-              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
-              allow="autoplay; fullscreen"
-              onLoad={onLoad}
-            />
+        {/* ── Demo Mode badge ── */}
+        {isDemo && !running && (
+          <div className="absolute top-2 right-2 z-30 pointer-events-none">
+            <div className="flex items-center gap-1.5 bg-indigo-600/90 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg backdrop-blur-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-200 animate-pulse" />
+              Demo page — interactions work here
+            </div>
           </div>
         )}
 
-        {/* No-URL placeholder */}
-        {!hasUrl && (
-          <div className="absolute inset-0 bg-gray-50 flex flex-col pointer-events-none select-none">
-            {/* Skeleton page */}
-            <div className="p-5 flex flex-col gap-3 flex-1">
-              <div className="flex items-center gap-3 pb-3 border-b border-gray-200">
-                <div className="w-8 h-8 rounded bg-indigo-100 flex items-center justify-center"><div className="w-4 h-4 rounded-full bg-indigo-400" /></div>
-                <div className="h-3 w-28 bg-gray-300 rounded" />
-                <div className="ml-auto flex gap-2">
-                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
-                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
-                  <div className="h-2.5 w-12 bg-gray-200 rounded" />
-                </div>
-              </div>
-              <div className="flex gap-4 mt-2">
-                <div className="flex-1 space-y-2">
-                  <div className="h-6 w-3/4 bg-gray-200 rounded" />
-                  <div className="h-3 w-full bg-gray-100 rounded" />
-                  <div className="h-3 w-5/6 bg-gray-100 rounded" />
-                  <div className="h-3 w-4/6 bg-gray-100 rounded" />
-                  <div className="flex gap-2 mt-3">
-                    <div className="h-8 w-24 bg-indigo-200 rounded" />
-                    <div className="h-8 w-24 bg-gray-200 rounded" />
-                  </div>
-                </div>
-                <div className="w-36 h-28 bg-indigo-50 rounded-xl flex-shrink-0" />
-              </div>
-              <div className="flex gap-3 mt-1">
-                {[1,2,3].map(i=>(
-                  <div key={i} className="flex-1 h-20 bg-white rounded-lg border border-gray-200 p-3 space-y-1.5">
-                    <div className="h-2.5 w-1/2 bg-gray-200 rounded"/>
-                    <div className="h-2 w-full bg-gray-100 rounded"/>
-                    <div className="h-2 w-3/4 bg-gray-100 rounded"/>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* Centered message */}
-            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center">
-                <Globe className="w-7 h-7 text-indigo-300" />
-              </div>
-              <p className="text-sm font-semibold text-gray-600">No URL configured</p>
-              <p className="text-xs text-gray-400 text-center max-w-52">
-                Add a <b>Visit URL</b> step and set its URL, or set a Base URL in the Builder toolbar.
-              </p>
-            </div>
-          </div>
-        )}
+        {/* ── Iframe — always rendered (demo or real site) ── */}
+        <div className="absolute inset-0 overflow-hidden">
+          <iframe
+            ref={iframeRef}
+            key={effectiveUrl}
+            src={effectiveUrl}
+            className="absolute top-0 left-0 w-full border-0"
+            style={{
+              height: `calc(100% + ${SCROLL_BUFFER}px)`,
+              transform: `translateY(-${Math.max(0, Math.min(offset, SCROLL_BUFFER))}px)`,
+              transition: activeAction === 'scroll' ? 'transform 0.85s cubic-bezier(0.4,0,0.2,1)' : 'transform 0.3s ease-out',
+              willChange: 'transform',
+            }}
+            title="Browser Preview"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
+            allow="autoplay; fullscreen"
+            onLoad={onLoad}
+          />
+        </div>
 
         {/* ── Step action banner (top, non-blocking) ── */}
         {running && activeAction && (
@@ -308,51 +270,112 @@ export default function RunnerPage() {
   // ── Act on each step in the preview ───────────────────────────────────────
   useVSCodeListener('TEST_RUN_STEP', (payload) => {
     const step = payload as any;
+    const iframeWin = iframeRef.current?.contentWindow as any;
 
+    // ── Visit: reset scroll ──────────────────────────────────────────────
     if (step.action === 'visit') {
-      // New page → reset scroll to top
       setIframeScrollOffset(0);
       setScrollDir(null);
       return;
     }
 
+    // ── Scroll ──────────────────────────────────────────────────────────
     if (step.action === 'scroll') {
       const isElement = step.scrollType === 'element';
-      const rawDelta  = isElement ? 400 : (step.scrollY ?? 500);
-      // Negative scrollY (scroll up) decreases offset; positive (scroll down) increases it
-      const delta = rawDelta;
-      const dir: 'up'|'down' = rawDelta < 0 ? 'up' : 'down';
+      const delta     = isElement ? 400 : (step.scrollY ?? 500);
+      const dir: 'up'|'down' = delta < 0 ? 'up' : 'down';
       setScrollDir(dir);
       setIframeScrollOffset(prev => Math.max(0, prev + delta));
-
-      // Also attempt real scroll on the iframe for same-origin sites
       try {
         const cw = iframeRef.current?.contentWindow;
         if (cw) {
           if (isElement && step.selector) {
-            cw.document.querySelector(step.selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (cw as any).document.querySelector(step.selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           } else {
-            cw.scrollBy({ top: delta, behavior: 'smooth' });
+            cw.scrollBy({ top: delta, behavior: 'smooth' } as ScrollToOptions);
           }
         }
-      } catch {
-        // Cross-origin — CSS transform fallback already applied via scrollOffset
+      } catch { /* cross-origin — CSS transform handles it */ }
+      return;
+    }
+
+    // ── All other actions — try demo page API first, fallback to raw DOM ─
+    try {
+      switch (step.action) {
+        case 'click':
+        case 'dblclick':
+        case 'rightclick':
+          if (iframeWin?.pwHighlight) {
+            iframeWin.pwHighlight(step.selector || '[data-testid="login-btn"]', 'click');
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '');
+            if (el) (el as HTMLElement).click();
+          }
+          break;
+
+        case 'hover':
+          if (iframeWin?.pwHighlight) {
+            iframeWin.pwHighlight(step.selector || 'button', 'hover');
+          }
+          break;
+
+        case 'fill':
+        case 'type':
+          if (iframeWin?.pwFill) {
+            iframeWin.pwFill(step.selector || 'input', step.value ?? '');
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
+            if (el) { el.focus(); el.value = step.value ?? ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+          }
+          break;
+
+        case 'clear':
+          if (iframeWin?.pwClear) {
+            iframeWin.pwClear(step.selector || 'input');
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
+            if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+          }
+          break;
+
+        case 'select':
+          if (iframeWin?.pwSelect) {
+            iframeWin.pwSelect(step.selector || 'select', step.value ?? '');
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLSelectElement | null;
+            if (el) { el.value = step.value ?? ''; el.dispatchEvent(new Event('change', { bubbles: true })); }
+          }
+          break;
+
+        case 'check':
+          if (iframeWin?.pwCheck) {
+            iframeWin.pwCheck(step.selector || 'input[type="checkbox"]', true);
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
+            if (el) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+          }
+          break;
+
+        case 'uncheck':
+          if (iframeWin?.pwCheck) {
+            iframeWin.pwCheck(step.selector || 'input[type="checkbox"]', false);
+          } else {
+            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
+            if (el) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); }
+          }
+          break;
+
+        case 'focus':
+          if (iframeWin?.pwHighlight) {
+            iframeWin.pwHighlight(step.selector || 'input', 'hover');
+          }
+          break;
+
+        default:
+          // Visual-only feedback via overlays (assert, wait, screenshot, etc.)
+          break;
       }
-    }
-
-    if (step.action === 'click' || step.action === 'dblclick') {
-      try {
-        const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '');
-        if (el) (el as HTMLElement).click();
-      } catch { /* cross-origin */ }
-    }
-
-    if (step.action === 'fill' || step.action === 'type') {
-      try {
-        const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement|null;
-        if (el) { el.focus(); el.value = step.value ?? ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
-      } catch { /* cross-origin */ }
-    }
+    } catch { /* cross-origin site — overlays still show */ }
   });
 
   useVSCodeListener('TEST_RUN_COMPLETE', (payload) => {

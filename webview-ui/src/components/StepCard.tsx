@@ -42,7 +42,13 @@ export default function StepCard({ step, index, isSelected, total }: StepCardPro
 
   const chipClass = ACTION_COLOR[step.action] ?? 'chip-default';
   const subtitle = getSubtitle(step);
-  const hasWarning = !step.selector && !['visit','wait','reload','goback','goforward','newpage','closepage','setviewport','screenshot','evaluate'].includes(step.action);
+  // Only show warning for actions that genuinely need a selector and don't have one
+  const NO_SELECTOR_NEEDED = [
+    'visit','wait','reload','goback','goforward','newpage','closepage',
+    'setviewport','screenshot','evaluate','scroll','cookie','localstorage',
+    'mockresponse','popup','frame','networkrequest','press',
+  ];
+  const hasWarning = !step.selector && !NO_SELECTOR_NEEDED.includes(step.action);
 
   return (
     <div
