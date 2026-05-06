@@ -33,35 +33,49 @@ function normalizeUrl(raw: string): string {
 }
 
 function SimBrowser({
-  url, running, status, activeAction, activeLabel, stepIdx, totalSteps, iframeRef, onLoad,
+  url, running, status, activeAction, activeLabel, stepIdx, totalSteps,
+  iframeRef, onLoad, scrollOffset, scrollDir,
 }: {
   url: string; running: boolean; status: string;
   activeAction: string; activeLabel: string;
   stepIdx: number|null; totalSteps: number;
   iframeRef?: React.RefObject<HTMLIFrameElement>;
   onLoad?: () => void;
+  scrollOffset?: number;
+  scrollDir?: 'up'|'down'|null;
 }) {
   const color      = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actionText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
   const progress   = stepIdx !== null ? ((stepIdx + 1) / totalSteps) * 100 : 0;
   const hasUrl     = !!url;
+  const offset     = scrollOffset ?? 0;
+  // Max virtual scroll height we support
+  const SCROLL_BUFFER = 2000;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 relative overflow-hidden bg-white">
 
-        {/* ── Live Website Iframe (fully interactive) ── */}
+        {/* ── Live Website Iframe — taller than container so translateY reveals below-fold content ── */}
         {hasUrl && (
-          <iframe
-            ref={iframeRef}
-            key={url}
-            src={url}
-            className="absolute inset-0 w-full h-full border-0"
-            title="Live Browser Preview"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
-            allow="autoplay; fullscreen"
-            onLoad={onLoad}
-          />
+          <div className="absolute inset-0 overflow-hidden">
+            <iframe
+              ref={iframeRef}
+              key={url}
+              src={url}
+              className="absolute top-0 left-0 w-full border-0"
+              style={{
+                height: `calc(100% + ${SCROLL_BUFFER}px)`,
+                transform: `translateY(-${Math.max(0, Math.min(offset, SCROLL_BUFFER))}px)`,
+                transition: activeAction === 'scroll' ? 'transform 0.85s cubic-bezier(0.4,0,0.2,1)' : 'transform 0.3s ease-out',
+                willChange: 'transform',
+              }}
+              title="Live Browser Preview"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
+              allow="autoplay; fullscreen"
+              onLoad={onLoad}
+            />
+          </div>
         )}
 
         {/* No-URL placeholder */}
@@ -154,10 +168,26 @@ function SimBrowser({
           </div>
         )}
 
-        {/* ── Scroll indicator (non-blocking) ── */}
+        {/* ── Scroll indicator — direction-aware track + thumb ── */}
         {running && activeAction === 'scroll' && (
-          <div className="absolute right-3 top-1/4 bottom-1/4 w-1.5 bg-gray-300/60 rounded-full pointer-events-none z-10">
-            <div className="absolute w-full rounded-full animate-bounce" style={{ height:'30%', top:'30%', background: color }} />
+          <div className="absolute right-3 top-8 bottom-8 w-2 pointer-events-none z-10 flex flex-col items-center gap-1">
+            {/* Scrollbar track */}
+            <div className="flex-1 w-1.5 bg-gray-300/40 rounded-full relative overflow-hidden">
+              <div
+                className="absolute left-0 right-0 rounded-full"
+                style={{
+                  height: '30%',
+                  background: color,
+                  top: scrollDir === 'up' ? '10%' : '60%',
+                  transition: 'top 0.85s cubic-bezier(0.4,0,0.2,1)',
+                  boxShadow: `0 0 8px ${color}80`,
+                }}
+              />
+            </div>
+            {/* Arrow hint */}
+            <div className="text-[9px] font-bold" style={{ color }}>
+              {scrollDir === 'up' ? '↑' : '↓'}
+            </div>
           </div>
         )}
 
@@ -212,9 +242,11 @@ export default function RunnerPage() {
   const [activeStepIdx, setActiveStepIdx] = useState<number|null>(null);
   const [activeAction, setActiveAction]   = useState('');
   const [activeLabel, setActiveLabel]     = useState('');
-  const [displayUrl, setDisplayUrl]       = useState('');
-  const [urlInput, setUrlInput]           = useState('');
-  const [iframeLoading, setIframeLoading] = useState(false);
+  const [displayUrl, setDisplayUrl]           = useState('');
+  const [urlInput, setUrlInput]               = useState('');
+  const [iframeLoading, setIframeLoading]     = useState(false);
+  const [iframeScrollOffset, setIframeScrollOffset] = useState(0);
+  const [scrollDir, setScrollDir]             = useState<'up'|'down'|null>(null);
   const logEndRef    = useRef<HTMLDivElement>(null);
   const iframeRef    = useRef<HTMLIFrameElement>(null);
   const autoRunFired = useRef(false);
@@ -273,6 +305,56 @@ export default function RunnerPage() {
     }
   });
 
+  // ── Act on each step in the preview ───────────────────────────────────────
+  useVSCodeListener('TEST_RUN_STEP', (payload) => {
+    const step = payload as any;
+
+    if (step.action === 'visit') {
+      // New page → reset scroll to top
+      setIframeScrollOffset(0);
+      setScrollDir(null);
+      return;
+    }
+
+    if (step.action === 'scroll') {
+      const isElement = step.scrollType === 'element';
+      const rawDelta  = isElement ? 400 : (step.scrollY ?? 500);
+      // Negative scrollY (scroll up) decreases offset; positive (scroll down) increases it
+      const delta = rawDelta;
+      const dir: 'up'|'down' = rawDelta < 0 ? 'up' : 'down';
+      setScrollDir(dir);
+      setIframeScrollOffset(prev => Math.max(0, prev + delta));
+
+      // Also attempt real scroll on the iframe for same-origin sites
+      try {
+        const cw = iframeRef.current?.contentWindow;
+        if (cw) {
+          if (isElement && step.selector) {
+            cw.document.querySelector(step.selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            cw.scrollBy({ top: delta, behavior: 'smooth' });
+          }
+        }
+      } catch {
+        // Cross-origin — CSS transform fallback already applied via scrollOffset
+      }
+    }
+
+    if (step.action === 'click' || step.action === 'dblclick') {
+      try {
+        const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '');
+        if (el) (el as HTMLElement).click();
+      } catch { /* cross-origin */ }
+    }
+
+    if (step.action === 'fill' || step.action === 'type') {
+      try {
+        const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement|null;
+        if (el) { el.focus(); el.value = step.value ?? ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+      } catch { /* cross-origin */ }
+    }
+  });
+
   useVSCodeListener('TEST_RUN_COMPLETE', (payload) => {
     const p = payload as { passed: boolean };
     setRunning(false);
@@ -280,6 +362,7 @@ export default function RunnerPage() {
     setActiveStepIdx(null);
     setActiveAction('');
     setActiveLabel('');
+    setScrollDir(null);
     pushLog(p.passed ? '✅ Test run complete — all tests passed!' : '❌ Test run complete — some tests failed.', p.passed ? 'success' : 'error');
   });
 
@@ -308,6 +391,7 @@ export default function RunnerPage() {
   const handleClear = () => {
     setLogs([]); setStatus('idle'); setRunning(false);
     setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
+    setIframeScrollOffset(0); setScrollDir(null);
   };
 
   // Auto-run when navigated from Builder's Run button
@@ -525,6 +609,8 @@ export default function RunnerPage() {
                 totalSteps={enabledSteps.length}
                 iframeRef={iframeRef}
                 onLoad={() => setIframeLoading(false)}
+                scrollOffset={iframeScrollOffset}
+                scrollDir={scrollDir}
               />
             </div>
 

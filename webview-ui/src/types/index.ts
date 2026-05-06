@@ -79,7 +79,7 @@ export type MessageType =
   | 'GENERATE_TEST' | 'SAVE_FLOW' | 'LOAD_FLOW' | 'FLOW_SAVED' | 'FLOW_LOADED'
   | 'TEST_GENERATED' | 'ERROR' | 'OPEN_FILE' | 'GET_FLOWS' | 'FLOWS_LIST'
   | 'DELETE_FLOW' | 'FLOW_DELETED' | 'RUN_TEST' | 'TEST_RESULT' | 'EXPORT_JSON'
-  | 'TEST_RUN_LOG' | 'TEST_RUN_COMPLETE';
+  | 'TEST_RUN_LOG' | 'TEST_RUN_STEP' | 'TEST_RUN_COMPLETE';
 
 export interface VSCodeMessage { type: MessageType; payload?: unknown; }
 

@@ -362,7 +362,7 @@ function getVSCodeAPI(): VSCodeAPI {
         const enabledSteps  = steps.filter((s: any) => s.enabled !== false);
         const baseUrl       = flow?.baseUrl && flow.baseUrl !== 'https://' ? flow.baseUrl : '';
 
-        const logs: Array<{ delay: number; type: string; message: string }> = [
+        const logs: Array<{ delay: number; type: string; message: string; step?: any }> = [
           { delay: 100,  type: 'info',    message: `▶  Running: ${safeName}.spec.ts` },
           { delay: 350,  type: 'info',    message: `Browser: chromium (headless)` },
           { delay: 600,  type: 'info',    message: `Launching browser…` },
@@ -375,6 +375,7 @@ function getVSCodeAPI(): VSCodeAPI {
               delay: 850 + i * 650,
               type: 'step',
               message: `[${i + 1}/${enabledSteps.length}] ${displayLabel} (${s.action})`,
+              step: s,
             };
           }),
           {
@@ -389,9 +390,13 @@ function getVSCodeAPI(): VSCodeAPI {
           },
         ];
 
-        logs.forEach(({ delay, type, message }) => {
+        logs.forEach(({ delay, type, message, step }) => {
           setTimeout(() => {
             window.postMessage({ type: 'TEST_RUN_LOG', payload: { logType: type, message } }, '*');
+            // Also fire a dedicated step event so the preview can react with real actions
+            if (type === 'step' && step) {
+              window.postMessage({ type: 'TEST_RUN_STEP', payload: step }, '*');
+            }
           }, delay);
         });
 
