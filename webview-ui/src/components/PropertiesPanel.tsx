@@ -126,47 +126,115 @@ export default function PropertiesPanel() {
         )}
 
         {/* ── Scroll ────────────────────────────── */}
-        {s.action === 'scroll' && (
-          <>
-            <Field label="Scroll Type">
-              <select className="select text-xs py-1" value={s.scrollType ?? 'page'}
-                onChange={e => upd({ scrollType: e.target.value as 'page' | 'element' })}>
-                <option value="page">Page Scroll (pixels)</option>
-                <option value="element">Scroll Element into View</option>
-              </select>
-            </Field>
-            {(s.scrollType ?? 'page') === 'page' ? (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="Scroll X (px)">
-                    <input type="number" className="input-sm" placeholder="0"
-                      value={s.scrollX ?? 0} onChange={e => upd({ scrollX: parseInt(e.target.value) || 0 })} />
+        {s.action === 'scroll' && (() => {
+          const scrollY   = s.scrollY ?? 500;
+          const isDown    = scrollY >= 0;
+          const absY      = Math.abs(scrollY);
+          const setDir    = (down: boolean) => upd({ scrollY: down ? absY : -absY });
+          const setAbs    = (abs: number)   => upd({ scrollY: isDown ? abs : -abs });
+          return (
+            <>
+              <Field label="Scroll Type">
+                <select className="select text-xs py-1" value={s.scrollType ?? 'page'}
+                  onChange={e => upd({ scrollType: e.target.value as 'page' | 'element' })}>
+                  <option value="page">Page Scroll (pixels)</option>
+                  <option value="element">Scroll Element into View</option>
+                </select>
+              </Field>
+
+              {(s.scrollType ?? 'page') === 'page' ? (
+                <>
+                  {/* Direction toggle */}
+                  <Field label="Direction">
+                    <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-semibold">
+                      <button
+                        type="button"
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 transition-colors ${isDown ? 'bg-indigo-600 text-white' : 'bg-surface-800 text-slate-400 hover:bg-surface-700'}`}
+                        onClick={() => setDir(true)}
+                      >
+                        <span>↓</span> Scroll Down
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 transition-colors ${!isDown ? 'bg-indigo-600 text-white' : 'bg-surface-800 text-slate-400 hover:bg-surface-700'}`}
+                        onClick={() => setDir(false)}
+                      >
+                        <span>↑</span> Scroll Up
+                      </button>
+                    </div>
                   </Field>
-                  <Field label="Scroll Y (px)">
-                    <input type="number" className="input-sm" placeholder="500"
-                      value={s.scrollY ?? 500} onChange={e => upd({ scrollY: parseInt(e.target.value) || 0 })} />
+
+                  {/* Preset amounts */}
+                  <Field label="Quick Presets">
+                    <div className="flex gap-1.5 flex-wrap">
+                      {[
+                        { label: 'Small',     px: 300  },
+                        { label: 'Medium',    px: 500  },
+                        { label: 'Large',     px: 800  },
+                        { label: 'Full Page', px: 1080 },
+                      ].map(p => (
+                        <button
+                          key={p.px}
+                          type="button"
+                          onClick={() => setAbs(p.px)}
+                          className={`px-2 py-1 rounded text-[11px] border transition-colors ${
+                            absY === p.px
+                              ? 'bg-indigo-600 border-indigo-500 text-white'
+                              : 'bg-surface-800 border-slate-700 text-slate-400 hover:border-indigo-500 hover:text-white'
+                          }`}
+                        >
+                          {p.label}
+                          <span className="ml-1 opacity-60">{p.px}px</span>
+                        </button>
+                      ))}
+                    </div>
                   </Field>
-                </div>
-                <Field label="Behavior">
-                  <select className="select text-xs py-1" value={s.scrollBehavior ?? 'smooth'}
-                    onChange={e => upd({ scrollBehavior: e.target.value as 'smooth' | 'auto' })}>
-                    <option value="smooth">Smooth</option>
-                    <option value="auto">Instant</option>
-                  </select>
-                </Field>
-                <p className="text-[10px] text-slate-500 -mt-1">Positive Y scrolls down, negative scrolls up. E.g. Y=500 scrolls down 500px.</p>
-              </>
-            ) : (
-              <>
-                <Field label="Element Selector" required>
-                  <input className="input-sm font-mono" placeholder="#footer, .section, [data-id='x']"
-                    value={s.selector ?? ''} onChange={e => upd({ selector: e.target.value })} />
-                </Field>
-                <p className="text-[10px] text-slate-500 -mt-1">Scrolls the page until this element is visible.</p>
-              </>
-            )}
-          </>
-        )}
+
+                  {/* Custom pixel inputs */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Scroll X (px)">
+                      <input type="number" className="input-sm" placeholder="0"
+                        value={s.scrollX ?? 0}
+                        onChange={e => { const v = parseInt(e.target.value); upd({ scrollX: isNaN(v) ? 0 : v }); }} />
+                    </Field>
+                    <Field label={`Scroll Y (${isDown ? '+' : '−'}px)`}>
+                      <input type="number" className="input-sm" placeholder="500"
+                        value={absY}
+                        min={0}
+                        onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0) setAbs(v); }} />
+                    </Field>
+                  </div>
+
+                  <Field label="Behavior">
+                    <select className="select text-xs py-1" value={s.scrollBehavior ?? 'smooth'}
+                      onChange={e => upd({ scrollBehavior: e.target.value as 'smooth' | 'auto' })}>
+                      <option value="smooth">Smooth</option>
+                      <option value="auto">Instant</option>
+                    </select>
+                  </Field>
+
+                  {/* Live summary */}
+                  <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-xs font-mono ${isDown ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
+                    <span className="text-base">{isDown ? '↓' : '↑'}</span>
+                    <span>
+                      {isDown ? 'Scroll down' : 'Scroll up'} <strong>{absY}px</strong>
+                      {(s.scrollX ?? 0) !== 0 && <> · right <strong>{s.scrollX}px</strong></>}
+                      {' '}· {s.scrollBehavior ?? 'smooth'}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Field label="Element Selector" required>
+                    <input className="input-sm font-mono" placeholder="#footer, .section, [data-id='x']"
+                      value={s.selector ?? ''} onChange={e => upd({ selector: e.target.value })} />
+                  </Field>
+                  <p className="text-[10px] text-slate-500 -mt-1">Scrolls the page until this element is visible.</p>
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* ── Viewport ──────────────────────────── */}
         {s.action === 'setviewport' && (
