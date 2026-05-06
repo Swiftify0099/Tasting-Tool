@@ -2,7 +2,7 @@ import { useFlow } from '../context/FlowContext';
 import { TestStep, AssertType } from '../types';
 import { Settings2, X, Info } from 'lucide-react';
 
-const ASSERT_TYPES: AssertType[] = ['url','title','text','visibility','enabled','checked','value','attribute','count','screenshot','network'];
+const ASSERT_TYPES: AssertType[] = ['url','title','text','visibility','enabled','checked','value','attribute','count','screenshot'];
 const KEYS = ['Enter','Tab','Escape','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Backspace','Delete','F1','F5','F12'];
 
 export default function PropertiesPanel() {
@@ -110,11 +110,44 @@ export default function PropertiesPanel() {
 
         {/* ── Press Key ─────────────────────────── */}
         {s.action === 'press' && (
-          <Field label="Key" required>
-            <select className="select text-xs py-1" value={s.key ?? 'Enter'} onChange={e => upd({ key: e.target.value })}>
-              {KEYS.map(k => <option key={k}>{k}</option>)}
-            </select>
-          </Field>
+          <>
+            {/* Target toggle: whole-page keyboard vs element-focused */}
+            <Field label="Target">
+              <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-semibold">
+                <button type="button"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 transition-colors ${(s.pressTarget ?? 'element') === 'element' ? 'bg-indigo-600 text-white' : 'bg-surface-800 text-slate-400 hover:bg-surface-700'}`}
+                  onClick={() => upd({ pressTarget: 'element' })}>
+                  🎯 Element
+                </button>
+                <button type="button"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 transition-colors ${s.pressTarget === 'keyboard' ? 'bg-indigo-600 text-white' : 'bg-surface-800 text-slate-400 hover:bg-surface-700'}`}
+                  onClick={() => upd({ pressTarget: 'keyboard' })}>
+                  ⌨️ Whole Page
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                {s.pressTarget === 'keyboard'
+                  ? 'Sends key globally — like pressing Enter after filling a form.'
+                  : 'Sends key to a focused element (requires selector).'}
+              </p>
+            </Field>
+            {(s.pressTarget ?? 'element') === 'element' && (
+              <Field label="CSS / XPath Selector" required>
+                <input className="input-sm font-mono" placeholder="#id, .class, [data-testid='x']"
+                  value={s.selector ?? ''} onChange={e => upd({ selector: e.target.value })} />
+              </Field>
+            )}
+            <Field label="Key" required>
+              <select className="select text-xs py-1" value={s.key ?? 'Enter'} onChange={e => upd({ key: e.target.value })}>
+                {KEYS.map(k => <option key={k}>{k}</option>)}
+              </select>
+            </Field>
+            <div className="text-[10px] font-mono px-2 py-1.5 bg-surface-800 rounded border border-slate-700 text-slate-400">
+              {s.pressTarget === 'keyboard'
+                ? `page.keyboard.press('${s.key ?? 'Enter'}')`
+                : `page.press('${s.selector || '[selector]'}', '${s.key ?? 'Enter'}')`}
+            </div>
+          </>
         )}
 
         {/* ── Upload ────────────────────────────── */}
@@ -260,13 +293,33 @@ export default function PropertiesPanel() {
         {s.action === 'frame' && (
           <>
             <Field label="Frame Selector" required>
-              <input className="input-sm font-mono" placeholder="iframe[name='myframe']"
+              <input className="input-sm font-mono" placeholder="iframe, iframe[name='myframe']"
                 value={s.frameSelector ?? ''} onChange={e => upd({ frameSelector: e.target.value })} />
+              <p className="text-[10px] text-slate-500 mt-0.5">CSS selector targeting the &lt;iframe&gt; element.</p>
             </Field>
-            <Field label="Action Selector inside Frame">
-              <input className="input-sm font-mono" placeholder="#submit-btn"
+            <Field label="Frame Action">
+              <select className="select text-xs py-1" value={s.frameAction ?? 'click'}
+                onChange={e => upd({ frameAction: e.target.value as any })}>
+                <option value="click">Click</option>
+                <option value="fill">Fill / Type</option>
+                <option value="type">Type (key events)</option>
+                <option value="check">Check checkbox</option>
+                <option value="uncheck">Uncheck checkbox</option>
+              </select>
+            </Field>
+            <Field label="Element Selector inside Frame" required>
+              <input className="input-sm font-mono" placeholder="#submit-btn, input[name='email']"
                 value={s.value ?? ''} onChange={e => upd({ value: e.target.value })} />
             </Field>
+            {['fill','type'].includes(s.frameAction ?? 'click') && (
+              <Field label="Content to Enter" required>
+                <input className="input-sm" placeholder="Text to fill / type…"
+                  value={s.frameContent ?? ''} onChange={e => upd({ frameContent: e.target.value })} />
+              </Field>
+            )}
+            <div className="text-[10px] font-mono px-2 py-1.5 bg-surface-800 rounded border border-slate-700 text-slate-400 break-all">
+              {`frame.locator('${s.value || '[selector]'}').${s.frameAction ?? 'click'}(${['fill','type'].includes(s.frameAction ?? '') ? `'${s.frameContent ?? ''}'` : ''})`}
+            </div>
           </>
         )}
 
@@ -403,7 +456,8 @@ function Field({ label, children, required }: { label: string; children: React.R
 
 function needsSelector(action: string): boolean {
   return !['visit','wait','reload','goback','goforward','newpage','closepage','setviewport',
-    'screenshot','evaluate','scroll','cookie','localstorage','mockresponse'].includes(action);
+    'screenshot','evaluate','scroll','cookie','localstorage','mockresponse',
+    'popup','frame','networkrequest','press'].includes(action);
 }
 
 function getIcon(action: string): string {

@@ -8,7 +8,7 @@ export type ActionType =
 
 export type AssertType =
   | 'url' | 'title' | 'text' | 'visibility' | 'enabled' | 'checked'
-  | 'value' | 'attribute' | 'count' | 'screenshot' | 'network';
+  | 'value' | 'attribute' | 'count' | 'screenshot';
 
 export interface BoundaryValue {
   label: string;
@@ -45,6 +45,9 @@ export interface TestStep {
   viewportHeight?: number;
   dragTargetSelector?: string;
   evaluateScript?: string;
+  pressTarget?: 'element' | 'keyboard';
+  frameAction?: 'click' | 'fill' | 'type' | 'check' | 'uncheck';
+  frameContent?: string;
   boundaryValues?: BoundaryValue[];
   enabled: boolean;
   comment?: string;

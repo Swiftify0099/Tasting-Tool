@@ -89,7 +89,10 @@ function generateStepCode(s: any, baseUrl: string): string {
     }
 
     case 'press':
-      return `  await page.press(${sel}, '${s.key ?? s.value ?? 'Enter'}');`;
+      if (s.pressTarget === 'keyboard' || !s.selector) {
+        return `  await page.keyboard.press('${s.key ?? 'Enter'}');`;
+      }
+      return `  await page.press(${sel}, '${s.key ?? 'Enter'}');`;
 
     case 'focus':
       return `  await page.focus(${sel});`;
@@ -176,12 +179,23 @@ function generateStepCode(s: any, baseUrl: string): string {
       return `  await page.evaluate(() => { ${s.evaluateScript ?? '/* your JS here */'} });`;
 
     case 'frame': {
-      const frameSel = s.frameSelector ?? 'iframe';
-      const innerSel = s.value ?? 'button';
-      return [
-        `  const frame = page.frameLocator('${frameSel}');`,
-        `  await frame.locator('${innerSel}').click();`,
-      ].join('\n');
+      const frameSel  = s.frameSelector ?? 'iframe';
+      const innerSel  = s.value ?? 'button';
+      const fAction   = s.frameAction ?? 'click';
+      const fContent  = s.frameContent ?? '';
+      const frameBase = `  const frame = page.frameLocator('${frameSel}');`;
+      switch (fAction) {
+        case 'fill':
+          return `${frameBase}\n  await frame.locator('${innerSel}').fill('${fContent}');`;
+        case 'type':
+          return `${frameBase}\n  await frame.locator('${innerSel}').pressSequentially('${fContent}');`;
+        case 'check':
+          return `${frameBase}\n  await frame.locator('${innerSel}').check();`;
+        case 'uncheck':
+          return `${frameBase}\n  await frame.locator('${innerSel}').uncheck();`;
+        default:
+          return `${frameBase}\n  await frame.locator('${innerSel}').click();`;
+      }
     }
 
     case 'setviewport':
