@@ -42,6 +42,10 @@ externalPort = 3001
 localPort = 5002
 externalPort = 3002
 
+[[ports]]
+localPort = 5003
+externalPort = 4200
+
 [deployment]
 deploymentTarget = "static"
 build = ["bash", "-c", "cd webview-ui && npm run build"]
