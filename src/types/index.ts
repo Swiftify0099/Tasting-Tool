@@ -113,6 +113,32 @@ export interface GeneratorOptions {
   videoOnFailure: boolean;
 }
 
+export type DOMCategory =
+  | 'button' | 'input' | 'select' | 'link' | 'checkbox'
+  | 'radio' | 'textarea' | 'form' | 'other';
+
+export type SelectorQuality = 'excellent' | 'good' | 'fair' | 'poor';
+
+export interface DOMElement {
+  uid: string;
+  tag: string;
+  type: string;
+  elementId: string;
+  name: string;
+  ariaLabel: string;
+  placeholder: string;
+  dataTestId: string;
+  text: string;
+  selector: string;
+  xpath: string;
+  role: string;
+  className: string;
+  href: string;
+  category: DOMCategory;
+  selectorQuality: SelectorQuality;
+  boundaryValues?: BoundaryValue[];
+}
+
 export type MessageType =
   | 'GENERATE_TEST'
   | 'SAVE_FLOW'
@@ -128,7 +154,15 @@ export type MessageType =
   | 'FLOW_DELETED'
   | 'RUN_TEST'
   | 'TEST_RESULT'
-  | 'EXPORT_JSON';
+  | 'EXPORT_JSON'
+  | 'EXTRACT_DOM'
+  | 'DOM_EXTRACTED'
+  | 'DOM_EXTRACT_ERROR'
+  | 'AI_GENERATE_FROM_DOM'
+  | 'TEST_RUN_LOG'
+  | 'TEST_RUN_STEP'
+  | 'TEST_RUN_SCREENSHOT'
+  | 'TEST_RUN_COMPLETE';
 
 export interface VSCodeMessage {
   type: MessageType;

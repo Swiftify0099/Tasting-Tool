@@ -1,20 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFlow } from '../context/FlowContext';
+import { useDOM } from '../context/DOMContext';
 import Toolbox from '../components/Toolbox';
 import Canvas from '../components/Canvas';
 import PropertiesPanel from '../components/PropertiesPanel';
 import {
   Save, Code2, Play, Plus, Download, Upload,
-  Wrench, Eye, EyeOff, Zap, RefreshCw, Trash2
+  Wrench, Eye, EyeOff, Zap, RefreshCw, Crosshair
 } from 'lucide-react';
 
 export default function BuilderPage() {
   const navigate = useNavigate();
-  const {
-    state, saveFlow, generateTest, newFlow, clearSteps,
-    updateFlow, exportJson, showToast
-  } = useFlow();
+  const { state, saveFlow, generateTest, newFlow,
+    updateFlow, exportJson, showToast } = useFlow();
+  const { domState } = useDOM();
   const { currentFlow, isSaving, isGenerating } = state;
 
   const [showProps, setShowProps] = useState(true);
@@ -106,6 +106,26 @@ export default function BuilderPage() {
           >
             {showProps ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
           </button>
+
+          {/* DOM Inspector shortcut */}
+          {domState.elements.length > 0 ? (
+            <button
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[10px] font-semibold hover:bg-cyan-500/20 transition-colors"
+              onClick={() => navigate('/dom-inspector')}
+              title={`${domState.elements.length} DOM elements extracted from ${domState.extractedUrl}`}
+            >
+              <Crosshair className="w-3 h-3" />
+              {domState.elements.length} DOM
+            </button>
+          ) : (
+            <button
+              className="btn-ghost text-[10px] px-2 py-1"
+              onClick={() => navigate('/dom-inspector')}
+              title="Extract DOM for smart selectors"
+            >
+              <Crosshair className="w-3 h-3" /> Inspector
+            </button>
+          )}
 
           <div className="w-px h-5 bg-slate-800 mx-0.5" />
 

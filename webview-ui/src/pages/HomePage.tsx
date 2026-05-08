@@ -2,14 +2,15 @@ import { useNavigate } from 'react-router-dom';
 import { useFlow } from '../context/FlowContext';
 import {
   Wrench, Play, History, Code2, Plus, FolderOpen,
-  Zap, ArrowRight, Layers, CheckCircle, Clock
+  Zap, ArrowRight, Layers, CheckCircle, Clock, Crosshair
 } from 'lucide-react';
 
 const FEATURE_CARDS = [
-  { icon: Wrench,  color: 'text-brand-400',   bg: 'bg-brand-500/10  border-brand-500/20',  title: 'Visual Builder',   desc: 'Drag & drop Playwright actions onto canvas', to: '/builder' },
-  { icon: Code2,   color: 'text-amber-400',    bg: 'bg-amber-500/10  border-amber-500/20',  title: 'Code Generator',   desc: 'Auto-generate TypeScript Playwright tests',  to: '/generator' },
-  { icon: Play,    color: 'text-success',       bg: 'bg-success/10    border-success/20',    title: 'Test Runner',      desc: 'Execute tests directly in the terminal',     to: '/runner' },
-  { icon: History, color: 'text-purple-400',   bg: 'bg-purple-500/10 border-purple-500/20', title: 'Flow History',     desc: 'Manage and reload saved test flows',         to: '/history' },
+  { icon: Wrench,    color: 'text-brand-400',  bg: 'bg-brand-500/10  border-brand-500/20',  title: 'Visual Builder',   desc: 'Drag & drop Playwright actions onto canvas',       to: '/builder' },
+  { icon: Crosshair, color: 'text-cyan-400',   bg: 'bg-cyan-500/10   border-cyan-500/20',   title: 'DOM Inspector',    desc: 'Extract elements, pick selectors & generate steps', to: '/dom-inspector' },
+  { icon: Code2,     color: 'text-amber-400',  bg: 'bg-amber-500/10  border-amber-500/20',  title: 'Code Generator',   desc: 'Auto-generate TypeScript Playwright tests',         to: '/generator' },
+  { icon: Play,      color: 'text-success',    bg: 'bg-success/10    border-success/20',    title: 'Test Runner',      desc: 'Execute tests directly in the terminal',            to: '/runner' },
+  { icon: History,   color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20', title: 'Flow History',     desc: 'Manage and reload saved test flows',                to: '/history' },
 ];
 
 const QUICK_ACTIONS = [
@@ -97,7 +98,7 @@ export default function HomePage() {
             <button
               key={to}
               onClick={() => navigate(to)}
-              className={`card p-4 text-left hover:scale-[1.02] transition-all duration-200 border ${bg} group`}
+              className={`card p-4 text-left hover:scale-[1.02] transition-all duration-200 border ${bg} group ${title === 'DOM Inspector' ? 'col-span-2' : ''}`}
             >
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${bg}`}>
                 <Icon className={`w-4 h-4 ${color}`} />

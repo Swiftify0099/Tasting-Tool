@@ -11,12 +11,21 @@ function flowId(): string {
 }
 
 function newFlow(): TestFlow {
+  const visitStep: TestStep = {
+    id: uuid(),
+    action: 'visit',
+    label: 'Visit URL',
+    url: 'https://',
+    enabled: true,
+    timeout: 30000,
+    comment: 'Start by visiting your target URL',
+  };
   return {
     id: flowId(),
     name: 'Untitled Flow',
     description: '',
     baseUrl: 'https://',
-    steps: [],
+    steps: [visitStep],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     tags: [],

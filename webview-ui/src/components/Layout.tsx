@@ -2,17 +2,18 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useFlow } from '../context/FlowContext';
 import Toast from './Toast';
 import {
-  Home, Wrench, Code2, Play, History, Settings, Zap, ChevronRight, Sparkles
+  Home, Wrench, Code2, Play, History, Settings, Zap, ChevronRight, Sparkles, Crosshair
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { to: '/home',      icon: Home,    label: 'Home',       desc: 'Dashboard & overview' },
-  { to: '/builder',   icon: Wrench,  label: 'Builder',    desc: 'Build test steps' },
-  { to: '/ai',        icon: Sparkles,label: 'AI Gen',     desc: 'Generate with AI' },
-  { to: '/generator', icon: Code2,   label: 'Generator',  desc: 'Code preview & export' },
-  { to: '/runner',    icon: Play,    label: 'Runner',     desc: 'Run & debug tests' },
-  { to: '/history',   icon: History, label: 'History',    desc: 'Saved flows' },
-  { to: '/settings',  icon: Settings,label: 'Settings',   desc: 'Configure options' },
+  { to: '/home',         icon: Home,      label: 'Home',        desc: 'Dashboard & overview' },
+  { to: '/builder',      icon: Wrench,    label: 'Builder',     desc: 'Build test steps' },
+  { to: '/dom-inspector',icon: Crosshair, label: 'Inspector',   desc: 'Extract DOM elements' },
+  { to: '/ai',           icon: Sparkles,  label: 'AI Gen',      desc: 'Generate with AI' },
+  { to: '/generator',    icon: Code2,     label: 'Generator',   desc: 'Code preview & export' },
+  { to: '/runner',       icon: Play,      label: 'Runner',      desc: 'Run & debug tests' },
+  { to: '/history',      icon: History,   label: 'History',     desc: 'Saved flows' },
+  { to: '/settings',     icon: Settings,  label: 'Settings',    desc: 'Configure options' },
 ];
 
 export default function Layout() {

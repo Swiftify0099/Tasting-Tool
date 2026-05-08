@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { TestFlow, VSCodeMessage, GeneratorOptions } from './types';
 import { generatePlaywrightTest } from './generator/playwrightGenerator';
+import { PlaywrightRunner } from './PlaywrightRunner';
 
 export class PanelManager {
   public static currentPanel: PanelManager | undefined;
@@ -10,6 +11,7 @@ export class PanelManager {
   private readonly _extensionUri: vscode.Uri;
   private _disposables: vscode.Disposable[] = [];
   private _flows: Map<string, TestFlow> = new Map();
+  private _currentRunner: PlaywrightRunner | null = null;
 
   private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
     this._panel = panel;
@@ -93,6 +95,11 @@ export class PanelManager {
       case 'EXPORT_JSON': {
         const flow = message.payload as TestFlow;
         await this._exportJson(flow);
+        break;
+      }
+      case 'EXTRACT_DOM': {
+        const url = message.payload as string;
+        await this._extractDOM(url);
         break;
       }
     }
@@ -248,37 +255,37 @@ export class PanelManager {
 
   private async _runTest(flow: TestFlow): Promise<void> {
     try {
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders) {
-        this._panel.webview.postMessage({ type: 'ERROR', payload: 'No workspace folder open to run tests in.' });
-        return;
+      /* Abort any previous run */
+      if (this._currentRunner) {
+        this._currentRunner.abort();
+        this._currentRunner = null;
       }
 
-      const safeName = flow.name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-      const enabledSteps = flow.steps.filter(s => s.enabled);
-
-      // Stream pre-run logs to the webview Runner page
-      const sendLog = (message: string, logType: string = 'info') => {
-        this._panel.webview.postMessage({ type: 'TEST_RUN_LOG', payload: { logType, message } });
+      const options = {
+        browserType: 'chromium',
+        headless:    false,
+        timeout:     15000,
+        slowMo:      0,
       };
 
-      sendLog(`▶  Running: ${safeName}.spec.ts`);
-      sendLog(`Steps: ${enabledSteps.length} enabled`);
-      sendLog('Launching Playwright terminal…');
-      enabledSteps.forEach((s, i) => {
-        sendLog(`[${i + 1}/${enabledSteps.length}] ${s.label} (${s.action})`, 'step');
+      const postToWebview = (type: string, payload: unknown) => {
+        try {
+          this._panel.webview.postMessage({ type, payload });
+        } catch { /* panel may have been disposed */ }
+      };
+
+      this._currentRunner = new PlaywrightRunner(postToWebview);
+
+      /* Fire-and-forget — runner streams messages as it progresses */
+      this._currentRunner.run(flow, options).then(() => {
+        this._currentRunner = null;
+      }).catch((err: Error) => {
+        this._currentRunner = null;
+        postToWebview('TEST_RUN_LOG', { logType: 'error', message: `✗ Unexpected error: ${err.message}` });
+        postToWebview('TEST_RUN_COMPLETE', { passed: false, error: err.message });
       });
-      sendLog('Test dispatched to terminal. See Terminal panel for live output.', 'success');
 
-      // Signal the runner that the run was dispatched
-      this._panel.webview.postMessage({ type: 'TEST_RUN_COMPLETE', payload: { passed: true } });
-
-      // Open the terminal and run
-      const terminal = vscode.window.createTerminal('Playwright Runner');
-      terminal.show();
-      terminal.sendText(`cd "${workspaceFolders[0].uri.fsPath}" && npx playwright test tests/${safeName}.spec.ts --reporter=list`);
-
-      vscode.window.showInformationMessage(`Running test: ${flow.name}`);
+      vscode.window.showInformationMessage(`🚀 Running: ${flow.name} (live preview active)`);
     } catch (err) {
       const error = err as Error;
       this._panel.webview.postMessage({ type: 'ERROR', payload: error.message });
@@ -312,6 +319,158 @@ export class PanelManager {
     }
   }
 
+  private async _extractDOM(url: string): Promise<void> {
+    let browser: any = null;
+    try {
+      // Resolve playwright from the extension's own node_modules (reliable on Windows)
+      const pwModulePath = path.join(__dirname, '..', 'node_modules', 'playwright');
+      let chromium: any;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        chromium = require(pwModulePath).chromium;
+      } catch {
+        // Fallback: try global playwright
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          chromium = require('playwright').chromium;
+        } catch {
+          this._panel.webview.postMessage({
+            type: 'DOM_EXTRACT_ERROR',
+            payload: 'Playwright not found. Run: npm install playwright in the extension directory.'
+          });
+          vscode.window.showErrorMessage('Playwright not installed. Run npm install playwright in the extension root.');
+          return;
+        }
+      }
+
+      vscode.window.showInformationMessage(`🔍 Extracting DOM from ${url}…`);
+
+      browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+      const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+      });
+      const page = await context.newPage();
+
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      } catch {
+        // Try without waitUntil if domcontentloaded times out
+        await page.goto(url, { timeout: 30000 });
+      }
+      // Wait for dynamic content
+      await page.waitForTimeout(2000);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const elements = await page.evaluate((): any[] => {
+        const results: any[] = [];
+        const seen = new WeakSet<any>();
+        const SELECTORS = [
+          'button', 'input', 'select', 'textarea', 'a[href]',
+          '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+          '[role="textbox"]', '[role="combobox"]', '[role="menuitem"]',
+          '[role="option"]', 'form', '[data-testid]', '[data-cy]', '[data-qa]'
+        ];
+        let uid = 0;
+
+        SELECTORS.forEach((sel: string) => {
+          try {
+            // eslint-disable-next-line no-undef
+            const doc = (globalThis as any).document || (global as any).document;
+            doc.querySelectorAll(sel).forEach((el: any) => {
+              if (seen.has(el)) { return; }
+              seen.add(el);
+
+              const tag: string = el.tagName.toLowerCase();
+              const elId: string = el.id || '';
+              const name: string = el.getAttribute('name') || '';
+              const ariaLabel: string = el.getAttribute('aria-label') || '';
+              const placeholder: string = el.getAttribute('placeholder') || '';
+              const dataTestId: string = el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-qa') || '';
+              const role: string = el.getAttribute('role') || tag;
+              const href: string = el.getAttribute('href') || '';
+              const type: string = el.getAttribute('type') || tag;
+              const rawText: string = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+              const className: string = typeof el.className === 'string' ? el.className : '';
+
+              let selector = '';
+              let quality = 'poor';
+              if (dataTestId) { selector = '[data-testid="' + dataTestId + '"]'; quality = 'excellent'; }
+              else if (elId)  { selector = '#' + elId; quality = 'good'; }
+              else if (name)  { selector = '[name="' + name + '"]'; quality = 'good'; }
+              else if (ariaLabel) { selector = '[aria-label="' + ariaLabel + '"]'; quality = 'fair'; }
+              else if (placeholder) { selector = '[placeholder="' + placeholder + '"]'; quality = 'fair'; }
+              else if (rawText && (tag === 'button' || tag === 'a') && rawText.length < 50) {
+                selector = 'text="' + rawText + '"'; quality = 'fair';
+              } else {
+                const cls: string = className.split(' ').filter(Boolean).slice(0, 2).join('.');
+                selector = tag + (cls ? '.' + cls : '');
+                quality = 'poor';
+              }
+
+              let category = 'other';
+              if (tag === 'button' || (tag === 'input' && (type === 'button' || type === 'submit' || type === 'reset')) || role === 'button') {
+                category = 'button';
+              } else if ((tag === 'input' && type === 'checkbox') || role === 'checkbox') {
+                category = 'checkbox';
+              } else if ((tag === 'input' && type === 'radio') || role === 'radio') {
+                category = 'radio';
+              } else if (tag === 'input' || role === 'textbox') {
+                category = 'input';
+              } else if (tag === 'select' || role === 'combobox') {
+                category = 'select';
+              } else if (tag === 'textarea') {
+                category = 'textarea';
+              } else if (tag === 'a') {
+                category = 'link';
+              } else if (tag === 'form') {
+                category = 'form';
+              }
+
+              const getXPath = (e: any): string => {
+                if (e.id) { return '//*[@id="' + e.id + '"]'; }
+                const parts: string[] = [];
+                let node: any = e;
+                while (node && node.nodeType === 1) {
+                  let idx = 1;
+                  let sib: any = node.previousSibling;
+                  while (sib) {
+                    if (sib.nodeType === 1 && sib.tagName === node.tagName) { idx++; }
+                    sib = sib.previousSibling;
+                  }
+                  parts.unshift(node.tagName.toLowerCase() + '[' + idx + ']');
+                  node = node.parentNode;
+                }
+                return '/' + parts.join('/');
+              };
+
+              results.push({
+                uid: String(++uid),
+                tag, type, elementId: elId, name, ariaLabel, placeholder,
+                dataTestId, text: rawText, selector, xpath: getXPath(el),
+                role, className, href, category, selectorQuality: quality
+              });
+            });
+          } catch { /* skip bad selectors */ }
+        });
+
+        return results;
+      });
+
+      await browser.close();
+      browser = null;
+
+      this._panel.webview.postMessage({ type: 'DOM_EXTRACTED', payload: { elements, url } });
+      vscode.window.showInformationMessage(`✅ Extracted ${elements.length} elements from ${url}`);
+
+    } catch (err) {
+      if (browser) { try { await browser.close(); } catch { /* ignore */ } }
+      const error = err as Error;
+      const msg = error.message || 'Unknown error during DOM extraction';
+      this._panel.webview.postMessage({ type: 'DOM_EXTRACT_ERROR', payload: msg });
+      vscode.window.showErrorMessage(`DOM extraction failed: ${msg.slice(0, 150)}`);
+    }
+  }
+
   private _getHtmlForWebview(webview: vscode.Webview): string {
     const webviewDistPath = vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'dist');
     const scriptUri = webview.asWebviewUri(
@@ -339,6 +498,11 @@ export class PanelManager {
   }
 
   public dispose(): void {
+    /* Stop any live Playwright run */
+    if (this._currentRunner) {
+      this._currentRunner.abort();
+      this._currentRunner = null;
+    }
     PanelManager.currentPanel = undefined;
     this._panel.dispose();
     while (this._disposables.length) {

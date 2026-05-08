@@ -2,194 +2,209 @@ import { useEffect, useRef, useState } from 'react';
 import { useFlow } from '../context/FlowContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useVSCodeListener } from '../hooks/useVSCode';
+import { TestStep } from '../types';
 import {
-  Play, Terminal, CheckCircle, XCircle, Clock, Zap,
+  Play, CheckCircle, XCircle, Clock, Zap,
   RefreshCw, Settings, Globe, Eye, EyeOff, MousePointer,
-  Lock, Loader, ChevronLeft, ChevronRight, RotateCw, AlertCircle
+  Lock, Loader, ChevronLeft, ChevronRight, RotateCw, AlertCircle,
+  Type, Check, ChevronsDown, Camera, Code2, ArrowLeft, ArrowRight, Move
 } from 'lucide-react';
 
 interface RunLog { time: string; message: string; type: 'info'|'success'|'error'|'step'; }
 
 const ACTION_COLOR: Record<string,string> = {
-  visit:'#38bdf8', click:'#818cf8', dblclick:'#818cf8',
-  fill:'#a78bfa', type:'#a78bfa', assert:'#34d399',
+  visit:'#38bdf8', click:'#818cf8', dblclick:'#818cf8', rightclick:'#818cf8',
+  fill:'#a78bfa', type:'#a78bfa', assert:'#34d399', check:'#34d399', uncheck:'#34d399',
   hover:'#22d3ee', wait:'#fbbf24', screenshot:'#fb7185',
+  scroll:'#fb923c', press:'#e879f9', reload:'#38bdf8',
+  goback:'#94a3b8', goforward:'#94a3b8', drag:'#f472b6', evaluate:'#facc15',
   default:'#6366f1',
 };
 const ACTION_LABEL: Record<string,string> = {
-  visit:'Navigating to', click:'Clicking', dblclick:'Double-clicking',
-  fill:'Filling input', type:'Typing', assert:'Asserting',
-  hover:'Hovering', wait:'Waiting', screenshot:'Taking screenshot',
-  check:'Checking', uncheck:'Unchecking', scroll:'Scrolling',
-  press:'Pressing key', reload:'Reloading', goback:'Going back',
-  goforward:'Going forward', default:'Executing',
+  visit:'Navigating to', click:'Clicking', dblclick:'Double-clicking', rightclick:'Right-clicking',
+  fill:'Filling in', type:'Typing into', assert:'Asserting', check:'Checking',
+  uncheck:'Unchecking', hover:'Hovering over', wait:'Waiting', screenshot:'Screenshot',
+  scroll:'Scrolling', press:'Pressing key', reload:'Reloading', goback:'Going back',
+  goforward:'Going forward', drag:'Dragging', evaluate:'Evaluating JS', default:'Executing',
+};
+const ACTION_ICON: Record<string, React.ElementType> = {
+  visit: Globe, click: MousePointer, dblclick: MousePointer, rightclick: MousePointer,
+  fill: Type, type: Type, check: Check, uncheck: Check, hover: Eye,
+  scroll: ChevronsDown, screenshot: Camera, evaluate: Code2,
+  goback: ArrowLeft, goforward: ArrowRight, drag: Move, default: Zap,
 };
 
-/** Add https:// if missing, return empty string for blank/placeholder URLs */
 function normalizeUrl(raw: string): string {
   if (!raw || raw === 'https://' || raw === 'http://') return '';
   if (/^https?:\/\//i.test(raw)) return raw;
   return 'https://' + raw;
 }
 
-const DEMO_PAGE = '/demo.html';
+// Removed dummy animations since we have live Playwright screenshots now.
 
-function SimBrowser({
-  url, running, status, activeAction, activeLabel, stepIdx, totalSteps,
-  iframeRef, onLoad, scrollOffset, scrollDir,
-}: {
+/* ── ActionVisualizer — main preview component ─────────────────── */
+function ActionVisualizer({ url, running, status, activeAction, activeLabel,
+  stepIdx, totalSteps, steps, activeStepIdx, screenshotData, prevScreenshotData }: {
   url: string; running: boolean; status: string;
-  activeAction: string; activeLabel: string;
+  activeAction: string; activeLabel: string; activeValue?: string;
   stepIdx: number|null; totalSteps: number;
-  iframeRef?: React.RefObject<HTMLIFrameElement>;
-  onLoad?: () => void;
-  scrollOffset?: number;
-  scrollDir?: 'up'|'down'|null;
+  steps: TestStep[]; activeStepIdx: number|null;
+  screenshotData: string|null; prevScreenshotData: string|null;
 }) {
-  const color      = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
-  const actionText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
-  const progress   = stepIdx !== null ? ((stepIdx + 1) / totalSteps) * 100 : 0;
-  const offset     = scrollOffset ?? 0;
-  const SCROLL_BUFFER = 2000;
+  const color   = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
+  const actText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
+  const enabled  = steps.filter(s => s.enabled !== false);
 
-  // Use demo page when no URL is configured — it's same-origin so real interactions work
-  const isDemo     = !url;
-  const effectiveUrl = url || DEMO_PAGE;
+  const [fadeKey, setFadeKey] = useState(0);
+
+  useEffect(() => {
+    if (screenshotData) {
+      setFadeKey(k => k + 1);
+    }
+  }, [screenshotData]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 relative overflow-hidden bg-white">
+    <div className="flex flex-col h-full overflow-hidden bg-[#0b0f18] relative">
 
-        {/* ── Demo Mode badge ── */}
-        {isDemo && !running && (
-          <div className="absolute top-2 right-2 z-30 pointer-events-none">
-            <div className="flex items-center gap-1.5 bg-indigo-600/90 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg backdrop-blur-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-200 animate-pulse" />
-              Demo page — interactions work here
-            </div>
-          </div>
-        )}
-
-        {/* ── Iframe — always rendered (demo or real site) ── */}
-        <div className="absolute inset-0 overflow-hidden">
-          <iframe
-            ref={iframeRef}
-            key={effectiveUrl}
-            src={effectiveUrl}
-            className="absolute top-0 left-0 w-full border-0"
-            style={{
-              height: `calc(100% + ${SCROLL_BUFFER}px)`,
-              transform: `translateY(-${Math.max(0, Math.min(offset, SCROLL_BUFFER))}px)`,
-              transition: activeAction === 'scroll' ? 'transform 0.85s cubic-bezier(0.4,0,0.2,1)' : 'transform 0.3s ease-out',
-              willChange: 'transform',
-            }}
-            title="Browser Preview"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation"
-            allow="autoplay; fullscreen"
-            onLoad={onLoad}
-          />
-        </div>
-
-        {/* ── Step action banner (top, non-blocking) ── */}
-        {running && activeAction && (
-          <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
-            <div className="flex items-center gap-2 px-3 py-2 text-white text-xs font-semibold shadow-lg"
-              style={{ background:`${color}ee` }}>
-              {activeAction === 'visit'
-                ? <Loader className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-                : activeAction === 'click' || activeAction === 'dblclick'
-                  ? <MousePointer className="w-3.5 h-3.5 flex-shrink-0" />
-                  : <div className="w-2 h-2 rounded-full bg-white animate-pulse flex-shrink-0" />
-              }
-              <span className="flex-shrink-0">{actionText}</span>
-              <span className="opacity-80 font-normal truncate">— {activeLabel}</span>
-              <span className="ml-auto opacity-70 flex-shrink-0 tabular-nums">
-                {stepIdx!==null?`${stepIdx+1}/${totalSteps}`:''}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* ── Click ripple overlay (non-blocking, pointer-events-none) ── */}
-        {running && (activeAction === 'click' || activeAction === 'dblclick') && (
-          <div className="absolute inset-0 pointer-events-none z-10">
-            <div className="absolute" style={{ top: '45%', left: '40%' }}>
-              <div className="w-8 h-8 rounded-full border-4 animate-ping opacity-60" style={{ borderColor: color }} />
-              <div className="absolute top-1 left-1 w-6 h-6 rounded-full border-2 animate-ping opacity-40" style={{ borderColor: color, animationDelay: '0.1s' }} />
-            </div>
-          </div>
-        )}
-
-        {/* ── Assert highlight (non-blocking) ── */}
-        {running && activeAction === 'assert' && (
-          <div className="absolute inset-0 pointer-events-none z-10">
-            <div className="absolute border-2 rounded-lg"
-              style={{ top:'20%', left:'8%', right:'8%', bottom:'45%', borderColor: color, boxShadow:`0 0 20px ${color}40` }}>
-              <div className="absolute inset-0 rounded-lg opacity-5" style={{ background: color }} />
-            </div>
-          </div>
-        )}
-
-        {/* ── Scroll indicator — direction-aware track + thumb ── */}
-        {running && activeAction === 'scroll' && (
-          <div className="absolute right-3 top-8 bottom-8 w-2 pointer-events-none z-10 flex flex-col items-center gap-1">
-            {/* Scrollbar track */}
-            <div className="flex-1 w-1.5 bg-gray-300/40 rounded-full relative overflow-hidden">
-              <div
-                className="absolute left-0 right-0 rounded-full"
-                style={{
-                  height: '30%',
-                  background: color,
-                  top: scrollDir === 'up' ? '10%' : '60%',
-                  transition: 'top 0.85s cubic-bezier(0.4,0,0.2,1)',
-                  boxShadow: `0 0 8px ${color}80`,
-                }}
+      {/* ── Action hero area ── */}
+      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden relative">
+        
+        {/* Render Screenshots */}
+        {(screenshotData || prevScreenshotData) ? (
+          <div className="w-full h-full relative bg-slate-900 flex items-center justify-center overflow-hidden group">
+            {/* Previous Screenshot (underneath, for crossfade) */}
+            {prevScreenshotData && (
+              <img
+                src={`data:image/jpeg;base64,${prevScreenshotData}`}
+                className={`absolute object-contain max-w-full max-h-full transition-opacity duration-500 ease-in-out ${screenshotData ? 'opacity-0' : 'opacity-100'}`}
+                alt="Previous Playwright State"
               />
-            </div>
-            {/* Arrow hint */}
-            <div className="text-[9px] font-bold" style={{ color }}>
-              {scrollDir === 'up' ? '↑' : '↓'}
-            </div>
-          </div>
-        )}
+            )}
+            
+            {/* Current Screenshot */}
+            {screenshotData && (
+              <img
+                key={fadeKey}
+                src={`data:image/jpeg;base64,${screenshotData}`}
+                className="absolute object-contain max-w-full max-h-full transition-opacity duration-300 ease-in-out animate-in fade-in"
+                alt="Live Playwright State"
+              />
+            )}
 
-        {/* ── Progress bar (bottom, thin) ── */}
-        {running && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 z-20 pointer-events-none">
-            <div className="h-full transition-all duration-700 ease-out"
-              style={{ width:`${progress}%`, background:`linear-gradient(90deg, #6366f1, ${color})` }} />
-          </div>
-        )}
-
-        {/* ── Pass banner (top-right badge, NOT full screen) ── */}
-        {status === 'passed' && (
-          <div className="absolute top-10 right-3 z-30 pointer-events-none">
-            <div className="flex items-center gap-2 bg-emerald-500 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-emerald-400/50">
-              <CheckCircle className="w-5 h-5 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-bold leading-tight">All Tests Passed!</p>
-                <p className="text-[11px] opacity-80">{totalSteps} step{totalSteps!==1?'s':''} completed</p>
+            {/* Action Overlay */}
+            {running && activeAction && (
+              <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-300 z-10 pointer-events-none">
+                <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-md"
+                  style={{ borderColor: color+'50', background: color+'18' }}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: color+'30' }}>
+                    {(() => { const Icon = ACTION_ICON[activeAction] ?? ACTION_ICON.default; return <Icon className="w-4 h-4" style={{ color }} />; })()}
+                  </div>
+                  <div className="flex-1 min-w-0 pr-4">
+                    <div className="text-xs font-bold text-white uppercase tracking-wider shadow-sm">{actText}</div>
+                    <div className="text-[10px] text-slate-300 truncate max-w-[200px]">{activeLabel}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <div className="w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_currentColor]" style={{ background: color, color }} />
+                    <span className="text-[10px] font-bold tracking-wider" style={{ color }}>LIVE</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Fail banner (top-right badge, NOT full screen) ── */}
-        {status === 'failed' && (
-          <div className="absolute top-10 right-3 z-30 pointer-events-none">
-            <div className="flex items-center gap-2 bg-red-500 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-red-400/50">
-              <XCircle className="w-5 h-5 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-bold leading-tight">Test Failed</p>
-                <p className="text-[11px] opacity-80">Check terminal for details</p>
+            )}
+            
+            {/* Completion Overlays over Screenshot */}
+            {!running && status === 'passed' && (
+              <div className="absolute inset-0 bg-emerald-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
+                <div className="flex items-center gap-3 bg-emerald-950/80 border border-emerald-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
+                  <CheckCircle className="w-8 h-8 text-emerald-400" />
+                  <div>
+                    <div className="font-bold text-emerald-400 text-lg tracking-wide">All Tests Passed!</div>
+                    <div className="text-xs text-emerald-200/70">{totalSteps} steps completed successfully</div>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {!running && status === 'failed' && (
+              <div className="absolute inset-0 bg-red-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
+                <div className="flex items-center gap-3 bg-red-950/80 border border-red-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
+                  <XCircle className="w-8 h-8 text-red-400" />
+                  <div>
+                    <div className="font-bold text-red-400 text-lg tracking-wide">Test Failed</div>
+                    <div className="text-xs text-red-200/70">Check terminal log for details</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-5 px-6 py-4">
+            {/* Idle */}
+            {!running && status === 'idle' && (
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                  <Play className="w-7 h-7 text-indigo-400" />
+                </div>
+                <p className="text-sm font-semibold text-white">Preview Ready</p>
+                <p className="text-xs text-slate-500">Click <strong>Generate &amp; Run</strong> to see live execution</p>
+              </div>
+            )}
+
+            {/* Passed */}
+            {!running && status === 'passed' && (
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                  <CheckCircle className="w-8 h-8 text-emerald-400" />
+                </div>
+                <p className="text-sm font-bold text-emerald-400">All Tests Passed!</p>
+                <p className="text-xs text-slate-500">{totalSteps} step{totalSteps!==1?'s':''} completed successfully</p>
+              </div>
+            )}
+
+            {/* Failed */}
+            {!running && status === 'failed' && (
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+                  <XCircle className="w-8 h-8 text-red-400" />
+                </div>
+                <p className="text-sm font-bold text-red-400">Test Failed</p>
+                <p className="text-xs text-slate-500">Check terminal log for details</p>
+              </div>
+            )}
           </div>
         )}
+      </div>
+
+      {/* ── Step timeline ── */}
+      <div className="border-t border-slate-800 bg-surface-950/60 overflow-y-auto flex-shrink-0" style={{ maxHeight:'160px' }}>
+        <div className="px-2 py-1.5 space-y-0.5">
+          {enabled.map((step, i) => {
+            const done   = activeStepIdx !== null && i < activeStepIdx;
+            const active = i === activeStepIdx;
+            const c = ACTION_COLOR[step.action] ?? ACTION_COLOR.default;
+            return (
+              <div key={step.id} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all duration-300 ${
+                active ? 'border' : 'border border-transparent'}`}
+                style={active ? { background: c+'12', borderColor: c+'40' } : {}}>
+                <span className="flex-shrink-0 w-4 text-center">
+                  {done ? <span className="text-emerald-400">✓</span>
+                    : active ? <RefreshCw className="w-3 h-3 animate-spin inline" style={{ color: c }} />
+                    : <span className="text-slate-700">○</span>}
+                </span>
+                <span className={`font-mono text-[10px] flex-shrink-0 w-5 text-right ${active ? 'text-white' : 'text-slate-600'}`}>{i+1}</span>
+                <span className={`flex-1 truncate ${done ? 'text-slate-500' : active ? 'text-white font-medium' : 'text-slate-600'}`}>{step.label}</span>
+                <span className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono" style={active ? { background: c+'25', color: c } : { color:'#334155' }}>{step.action}</span>
+              </div>
+            );
+          })}
+          {enabled.length === 0 && (
+            <p className="text-center text-[10px] text-slate-700 py-3">No steps — add steps in Builder first</p>
+          )}
+        </div>
       </div>
     </div>
   );
 }
+
 
 export default function RunnerPage() {
   const { state, generateTest, runTest, updateFlow } = useFlow();
@@ -204,39 +219,24 @@ export default function RunnerPage() {
   const [activeStepIdx, setActiveStepIdx] = useState<number|null>(null);
   const [activeAction, setActiveAction]   = useState('');
   const [activeLabel, setActiveLabel]     = useState('');
-  const [displayUrl, setDisplayUrl]           = useState('');
-  const [urlInput, setUrlInput]               = useState('');
-  const [iframeLoading, setIframeLoading]     = useState(false);
-  const [iframeScrollOffset, setIframeScrollOffset] = useState(0);
-  const [scrollDir, setScrollDir]             = useState<'up'|'down'|null>(null);
-  const logEndRef    = useRef<HTMLDivElement>(null);
-  const iframeRef    = useRef<HTMLIFrameElement>(null);
+  const [activeValue, setActiveValue]     = useState('');
+  const [displayUrl, setDisplayUrl]       = useState('');
+  const [scrollDir, setScrollDir]         = useState<'up'|'down'|null>(null);
+  const [screenshotData, setScreenshotData] = useState<string|null>(null);
+  const [prevScreenshotData, setPrevScreenshotData] = useState<string|null>(null);
+
+  const logEndRef  = useRef<HTMLDivElement>(null);
   const autoRunFired = useRef(false);
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
 
-  // Compute initial display URL: baseUrl → first visit step url
   useEffect(() => {
     const base = normalizeUrl(currentFlow.baseUrl);
-    if (base) { setDisplayUrl(base); setUrlInput(base); return; }
+    if (base) { setDisplayUrl(base); return; }
     const visitStep = currentFlow.steps.find(s => s.action === 'visit' && s.url);
-    if (visitStep?.url) {
-      const u = normalizeUrl(visitStep.url);
-      setDisplayUrl(u);
-      setUrlInput(u);
-    }
+    if (visitStep?.url) { setDisplayUrl(normalizeUrl(visitStep.url)); }
   }, [currentFlow.baseUrl, currentFlow.steps]);
 
-  // Keep urlInput in sync when displayUrl changes during test run
-  useEffect(() => { if (displayUrl) setUrlInput(displayUrl); }, [displayUrl]);
-
-  const navigateTo = (raw: string) => {
-    const u = normalizeUrl(raw.trim()) || raw.trim();
-    if (!u) return;
-    setDisplayUrl(u);
-    setUrlInput(u);
-    setIframeLoading(true);
-  };
 
   const pushLog = (message: string, type: RunLog['type'] = 'info') =>
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message, type }]);
@@ -267,116 +267,26 @@ export default function RunnerPage() {
     }
   });
 
-  // ── Act on each step in the preview ───────────────────────────────────────
   useVSCodeListener('TEST_RUN_STEP', (payload) => {
     const step = payload as any;
-    const iframeWin = iframeRef.current?.contentWindow as any;
-
-    // ── Visit: reset scroll ──────────────────────────────────────────────
     if (step.action === 'visit') {
-      setIframeScrollOffset(0);
       setScrollDir(null);
-      return;
+      if (step.url) setDisplayUrl(normalizeUrl(step.url));
+    } else if (step.action === 'scroll') {
+      const delta = step.scrollY ?? 500;
+      setScrollDir(delta < 0 ? 'up' : 'down');
     }
-
-    // ── Scroll ──────────────────────────────────────────────────────────
-    if (step.action === 'scroll') {
-      const isElement = step.scrollType === 'element';
-      const delta     = isElement ? 400 : (step.scrollY ?? 500);
-      const dir: 'up'|'down' = delta < 0 ? 'up' : 'down';
-      setScrollDir(dir);
-      setIframeScrollOffset(prev => Math.max(0, prev + delta));
-      try {
-        const cw = iframeRef.current?.contentWindow;
-        if (cw) {
-          if (isElement && step.selector) {
-            (cw as any).document.querySelector(step.selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else {
-            cw.scrollBy({ top: delta, behavior: 'smooth' } as ScrollToOptions);
-          }
-        }
-      } catch { /* cross-origin — CSS transform handles it */ }
-      return;
-    }
-
-    // ── All other actions — try demo page API first, fallback to raw DOM ─
-    try {
-      switch (step.action) {
-        case 'click':
-        case 'dblclick':
-        case 'rightclick':
-          if (iframeWin?.pwHighlight) {
-            iframeWin.pwHighlight(step.selector || '[data-testid="login-btn"]', 'click');
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '');
-            if (el) (el as HTMLElement).click();
-          }
-          break;
-
-        case 'hover':
-          if (iframeWin?.pwHighlight) {
-            iframeWin.pwHighlight(step.selector || 'button', 'hover');
-          }
-          break;
-
-        case 'fill':
-        case 'type':
-          if (iframeWin?.pwFill) {
-            iframeWin.pwFill(step.selector || 'input', step.value ?? '');
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
-            if (el) { el.focus(); el.value = step.value ?? ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
-          }
-          break;
-
-        case 'clear':
-          if (iframeWin?.pwClear) {
-            iframeWin.pwClear(step.selector || 'input');
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
-            if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
-          }
-          break;
-
-        case 'select':
-          if (iframeWin?.pwSelect) {
-            iframeWin.pwSelect(step.selector || 'select', step.value ?? '');
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLSelectElement | null;
-            if (el) { el.value = step.value ?? ''; el.dispatchEvent(new Event('change', { bubbles: true })); }
-          }
-          break;
-
-        case 'check':
-          if (iframeWin?.pwCheck) {
-            iframeWin.pwCheck(step.selector || 'input[type="checkbox"]', true);
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
-            if (el) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
-          }
-          break;
-
-        case 'uncheck':
-          if (iframeWin?.pwCheck) {
-            iframeWin.pwCheck(step.selector || 'input[type="checkbox"]', false);
-          } else {
-            const el = iframeRef.current?.contentDocument?.querySelector(step.selector ?? '') as HTMLInputElement | null;
-            if (el) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); }
-          }
-          break;
-
-        case 'focus':
-          if (iframeWin?.pwHighlight) {
-            iframeWin.pwHighlight(step.selector || 'input', 'hover');
-          }
-          break;
-
-        default:
-          // Visual-only feedback via overlays (assert, wait, screenshot, etc.)
-          break;
-      }
-    } catch { /* cross-origin site — overlays still show */ }
+    setActiveValue((step.action === 'fill' || step.action === 'type') ? (step.value ?? '') : '');
   });
+
+  useVSCodeListener('TEST_RUN_SCREENSHOT', (payload) => {
+    const data = payload as { stepIdx: number; action: string; phase: string; color: string; screenshotBase64: string };
+    if (data.screenshotBase64) {
+      setPrevScreenshotData(screenshotData);
+      setScreenshotData(data.screenshotBase64);
+    }
+  });
+
 
   useVSCodeListener('TEST_RUN_COMPLETE', (payload) => {
     const p = payload as { passed: boolean };
@@ -385,6 +295,7 @@ export default function RunnerPage() {
     setActiveStepIdx(null);
     setActiveAction('');
     setActiveLabel('');
+    setActiveValue('');
     setScrollDir(null);
     pushLog(p.passed ? '✅ Test run complete — all tests passed!' : '❌ Test run complete — some tests failed.', p.passed ? 'success' : 'error');
   });
@@ -404,6 +315,7 @@ export default function RunnerPage() {
 
     setLogs([]); setRunning(true); setStatus('running');
     setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
+    setScreenshotData(null); setPrevScreenshotData(null);
     pushLog(`▶  Starting: "${currentFlow.name}"`, 'info');
     pushLog(`Steps: ${currentFlow.steps.filter(s=>s.enabled).length} enabled of ${currentFlow.steps.length} total`, 'info');
     pushLog('Generating test file…', 'info');
@@ -413,8 +325,8 @@ export default function RunnerPage() {
 
   const handleClear = () => {
     setLogs([]); setStatus('idle'); setRunning(false);
-    setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
-    setIframeScrollOffset(0); setScrollDir(null);
+    setActiveStepIdx(null); setActiveAction(''); setActiveLabel(''); setActiveValue('');
+    setScrollDir(null); setScreenshotData(null); setPrevScreenshotData(null);
   };
 
   // Auto-run when navigated from Builder's Run button
@@ -545,102 +457,39 @@ export default function RunnerPage() {
           )}
         </div>
 
-        {/* Browser preview */}
+        {/* Action Visualizer */}
         {showPreview && (
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#0d1117]">
-            {/* Browser chrome */}
-            <div className="flex flex-col border-b border-slate-800 bg-[#1a1f2e] flex-shrink-0">
-              {/* Tab bar */}
-              <div className="flex items-center gap-2 px-3 pt-1.5">
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <div className="w-3 h-3 rounded-full bg-red-400/70" />
-                  <div className="w-3 h-3 rounded-full bg-amber-400/70" />
-                  <div className="w-3 h-3 rounded-full bg-emerald-400/70" />
-                </div>
-                <div className="flex items-center gap-1 ml-2">
-                  <div className="flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 border-b-0 rounded-t-lg px-4 py-1.5 text-[10px] text-slate-300">
-                    {iframeLoading
-                      ? <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin" />
-                      : <Globe className="w-2.5 h-2.5 text-slate-400" />
-                    }
-                    <span className="max-w-28 truncate ml-1">{displayUrl ? new URL(displayUrl.startsWith('http') ? displayUrl : 'https://'+displayUrl).hostname : (currentFlow.name||'New Tab')}</span>
-                  </div>
-                </div>
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0 border-l border-slate-800">
+            {/* Mini browser chrome header */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-[#1a1f2e] border-b border-slate-800 flex-shrink-0">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-400/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-400/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400/60" />
               </div>
-              {/* Navigation bar */}
-              <div className="flex items-center gap-1.5 px-3 pb-2 pt-1">
-                {/* Back / Forward / Refresh */}
-                <button
-                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
-                  onClick={() => iframeRef.current?.contentWindow?.history.back()}
-                  title="Go back"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
-                  onClick={() => iframeRef.current?.contentWindow?.history.forward()}
-                  title="Go forward"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <button
-                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors flex-shrink-0"
-                  onClick={() => { setIframeLoading(true); if(iframeRef.current) iframeRef.current.src = iframeRef.current.src; }}
-                  title="Reload page"
-                >
-                  {iframeLoading
-                    ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                    : <RotateCw className="w-3.5 h-3.5" />
-                  }
-                </button>
-                {/* Editable URL bar */}
-                <form
-                  className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 hover:border-slate-500 focus-within:border-brand-500 rounded-full px-3 py-1 min-w-0 transition-colors"
-                  onSubmit={e => { e.preventDefault(); navigateTo(urlInput); }}
-                >
-                  {displayUrl.startsWith('https') ? (
-                    <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" />
-                  ) : displayUrl ? (
-                    <AlertCircle className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
-                  ) : (
-                    <Globe className="w-2.5 h-2.5 text-slate-500 flex-shrink-0" />
-                  )}
-                  <input
-                    className="flex-1 bg-transparent text-[11px] text-slate-200 font-mono outline-none placeholder:text-slate-600 min-w-0"
-                    value={urlInput}
-                    onChange={e => setUrlInput(e.target.value)}
-                    onFocus={e => e.target.select()}
-                    placeholder="Enter URL and press Enter…"
-                    spellCheck={false}
-                  />
-                  {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0" />}
-                </form>
-                <div className="text-[10px] text-slate-600 capitalize flex-shrink-0 pl-1">{state.generatorOptions.browserType}</div>
+              <div className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 rounded-full px-2.5 py-0.5 mx-2 min-w-0">
+                {displayUrl.startsWith('https') ? <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" /> : <Globe className="w-2.5 h-2.5 text-slate-500 flex-shrink-0" />}
+                <span className="text-[10px] font-mono text-slate-400 truncate">{displayUrl || 'No URL — add a Visit step'}</span>
+                {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0 ml-auto" />}
               </div>
+              <span className="text-[10px] text-slate-600 capitalize flex-shrink-0">{state.generatorOptions.browserType}</span>
             </div>
-
-            {/* Simulated page */}
+            {/* Visualizer */}
             <div className="flex-1 overflow-hidden">
-              <SimBrowser
+              <ActionVisualizer
                 url={displayUrl}
                 running={running}
                 status={status}
                 activeAction={activeAction}
                 activeLabel={activeLabel}
+                activeValue={activeValue}
                 stepIdx={activeStepIdx}
                 totalSteps={enabledSteps.length}
-                iframeRef={iframeRef}
-                onLoad={() => setIframeLoading(false)}
-                scrollOffset={iframeScrollOffset}
-                scrollDir={scrollDir}
+                steps={currentFlow.steps}
+                activeStepIdx={activeStepIdx}
+                screenshotData={screenshotData}
+                prevScreenshotData={prevScreenshotData}
               />
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between px-3 py-1 border-t border-slate-800 bg-[#1a1f2e] flex-shrink-0 text-[10px] text-slate-600">
-              <span>{running ? '● Executing test…' : status==='passed' ? '● Test passed' : status==='failed' ? '● Test failed' : '○ Idle'}</span>
-              <span>Scroll &amp; click inside the preview to interact · <span className="capitalize">{state.generatorOptions.browserType}</span></span>
             </div>
           </div>
         )}

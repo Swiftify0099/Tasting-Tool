@@ -1,12 +1,18 @@
 import { useFlow } from '../context/FlowContext';
-import { TestStep, AssertType } from '../types';
-import { Settings2, X, Info } from 'lucide-react';
+import { useDOM } from '../context/DOMContext';
+import { TestStep, AssertType, DOMElement } from '../types';
+import { Settings2, X, Info, Crosshair, ChevronDown, Shield } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const ASSERT_TYPES: AssertType[] = ['url','title','text','visibility','enabled','checked','value','attribute','count','screenshot'];
 const KEYS = ['Enter','Tab','Escape','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Backspace','Delete','F1','F5','F12'];
 
 export default function PropertiesPanel() {
   const { selectedStep, updateStep, removeStep } = useFlow();
+  const { domState, getElementsForAction } = useDOM();
+  const navigate = useNavigate();
+  const [showDOMPicker, setShowDOMPicker] = useState(false);
 
   if (!selectedStep) {
     return (
@@ -18,6 +24,14 @@ export default function PropertiesPanel() {
           <div className="text-center px-4">
             <Settings2 className="w-8 h-8 text-slate-700 mx-auto mb-2" />
             <p className="text-xs text-slate-600">Select a step to edit its properties</p>
+            {domState.elements.length === 0 && (
+              <button
+                className="mt-3 text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 mx-auto"
+                onClick={() => navigate('/dom-inspector')}
+              >
+                <Crosshair className="w-3 h-3" /> Extract DOM for smart selectors
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -81,6 +95,53 @@ export default function PropertiesPanel() {
             <input className="input-sm font-mono" placeholder="#id, .class, [data-testid='x']"
               value={s.selector ?? ''} onChange={e => upd({ selector: e.target.value })} />
             <p className="text-[10px] text-slate-600 mt-0.5">Supports CSS selectors, XPath, text= and role=</p>
+            {/* DOM Element Picker */}
+            {domState.elements.length > 0 ? (
+              <div className="mt-1.5">
+                <button
+                  className={`flex items-center gap-1.5 text-[10px] font-medium transition-colors ${
+                    showDOMPicker ? 'text-cyan-400' : 'text-slate-500 hover:text-cyan-400'
+                  }`}
+                  onClick={() => setShowDOMPicker(v => !v)}
+                >
+                  <Crosshair className="w-3 h-3" />
+                  {showDOMPicker ? 'Hide' : 'Pick from DOM'}
+                  <span className="px-1 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[9px]">
+                    {getElementsForAction(s.action).length}
+                  </span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${showDOMPicker ? 'rotate-180' : ''}`} />
+                </button>
+                {showDOMPicker && (
+                  <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-slate-700 bg-surface-950 space-y-px">
+                    {getElementsForAction(s.action).length === 0 ? (
+                      <div className="px-3 py-2 text-[10px] text-slate-600">No matching elements for this action</div>
+                    ) : getElementsForAction(s.action).map((el: DOMElement) => (
+                      <button
+                        key={el.uid}
+                        className="w-full text-left px-2 py-1.5 hover:bg-surface-800 transition-colors group"
+                        onClick={() => { upd({ selector: el.selector }); setShowDOMPicker(false); }}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase w-10 flex-shrink-0">{el.tag}</span>
+                          <span className="text-[11px] text-slate-300 truncate flex-1">
+                            {el.text || el.ariaLabel || el.placeholder || el.name || el.elementId || el.selector}
+                          </span>
+                          {el.selectorQuality === 'excellent' && <Shield className="w-2.5 h-2.5 text-green-400 flex-shrink-0" />}
+                        </div>
+                        <div className="text-[9px] font-mono text-slate-600 truncate pl-11 group-hover:text-slate-400">{el.selector}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                className="mt-1 text-[10px] text-slate-600 hover:text-cyan-400 flex items-center gap-1 transition-colors"
+                onClick={() => navigate('/dom-inspector')}
+              >
+                <Crosshair className="w-3 h-3" /> Extract DOM for smart picker
+              </button>
+            )}
           </Field>
         )}
 

@@ -10,6 +10,32 @@ export type AssertType =
   | 'url' | 'title' | 'text' | 'visibility' | 'enabled' | 'checked'
   | 'value' | 'attribute' | 'count' | 'screenshot';
 
+export type DOMCategory =
+  | 'button' | 'input' | 'select' | 'link' | 'checkbox'
+  | 'radio' | 'textarea' | 'form' | 'other';
+
+export type SelectorQuality = 'excellent' | 'good' | 'fair' | 'poor';
+
+export interface DOMElement {
+  uid: string;
+  tag: string;
+  type: string;
+  elementId: string;
+  name: string;
+  ariaLabel: string;
+  placeholder: string;
+  dataTestId: string;
+  text: string;
+  selector: string;
+  xpath: string;
+  role: string;
+  className: string;
+  href: string;
+  category: DOMCategory;
+  selectorQuality: SelectorQuality;
+  boundaryValues?: BoundaryValue[];
+}
+
 export interface BoundaryValue {
   label: string;
   value: string | number;
@@ -82,7 +108,8 @@ export type MessageType =
   | 'GENERATE_TEST' | 'SAVE_FLOW' | 'LOAD_FLOW' | 'FLOW_SAVED' | 'FLOW_LOADED'
   | 'TEST_GENERATED' | 'ERROR' | 'OPEN_FILE' | 'GET_FLOWS' | 'FLOWS_LIST'
   | 'DELETE_FLOW' | 'FLOW_DELETED' | 'RUN_TEST' | 'TEST_RESULT' | 'EXPORT_JSON'
-  | 'TEST_RUN_LOG' | 'TEST_RUN_STEP' | 'TEST_RUN_COMPLETE';
+  | 'TEST_RUN_LOG' | 'TEST_RUN_STEP' | 'TEST_RUN_SCREENSHOT' | 'TEST_RUN_COMPLETE'
+  | 'EXTRACT_DOM' | 'DOM_EXTRACTED' | 'DOM_EXTRACT_ERROR' | 'AI_GENERATE_FROM_DOM';
 
 export interface VSCodeMessage { type: MessageType; payload?: unknown; }
 

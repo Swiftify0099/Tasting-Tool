@@ -381,7 +381,6 @@ function getVSCodeAPI(): VSCodeAPI {
           { delay: 350,  type: 'info',    message: `Browser: chromium (headless)` },
           { delay: 600,  type: 'info',    message: `Launching browser…` },
           ...enabledSteps.map((s: any, i: number) => {
-            // Show URL in label for visit steps
             const displayLabel = s.action === 'visit'
               ? (s.url ?? s.value ?? baseUrl ?? 'page')
               : (s.label ?? s.action);
@@ -407,7 +406,6 @@ function getVSCodeAPI(): VSCodeAPI {
         logs.forEach(({ delay, type, message, step }) => {
           setTimeout(() => {
             window.postMessage({ type: 'TEST_RUN_LOG', payload: { logType: type, message } }, '*');
-            // Also fire a dedicated step event so the preview can react with real actions
             if (type === 'step' && step) {
               window.postMessage({ type: 'TEST_RUN_STEP', payload: step }, '*');
             }
@@ -417,6 +415,130 @@ function getVSCodeAPI(): VSCodeAPI {
         setTimeout(() => {
           window.postMessage({ type: 'TEST_RUN_COMPLETE', payload: { passed: true } }, '*');
         }, 850 + enabledSteps.length * 650 + 900);
+      }
+
+      // ── EXTRACT_DOM ────────────────────────────────────────────
+      if (message.type === 'EXTRACT_DOM') {
+        const targetUrl = message.payload as string;
+
+        /** Parse HTML string and extract all interactive elements */
+        const extractFromHtml = (html: string): any[] => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const results: any[] = [];
+          const seen = new WeakSet<Element>();
+          const SELECTORS = [
+            'button', 'input', 'select', 'textarea', 'a[href]',
+            '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+            '[role="textbox"]', '[role="combobox"]', '[role="menuitem"]',
+            'form', '[data-testid]', '[data-cy]', '[data-qa]',
+          ];
+          let uid = 0;
+
+          SELECTORS.forEach(sel => {
+            try {
+              doc.querySelectorAll(sel).forEach(el => {
+                if (seen.has(el)) { return; }
+                seen.add(el);
+                const tag = el.tagName.toLowerCase();
+                const elId = el.id || '';
+                const name = el.getAttribute('name') || '';
+                const ariaLabel = el.getAttribute('aria-label') || '';
+                const placeholder = el.getAttribute('placeholder') || '';
+                const dataTestId = el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-qa') || '';
+                const role = el.getAttribute('role') || tag;
+                const href = el.getAttribute('href') || '';
+                const type = el.getAttribute('type') || tag;
+                const rawText = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+                const className = typeof el.className === 'string' ? el.className : '';
+
+                let selector = '';
+                let quality = 'poor';
+                if (dataTestId) { selector = `[data-testid="${dataTestId}"]`; quality = 'excellent'; }
+                else if (elId)  { selector = `#${elId}`; quality = 'good'; }
+                else if (name)  { selector = `[name="${name}"]`; quality = 'good'; }
+                else if (ariaLabel) { selector = `[aria-label="${ariaLabel}"]`; quality = 'fair'; }
+                else if (placeholder) { selector = `[placeholder="${placeholder}"]`; quality = 'fair'; }
+                else if (rawText && (tag === 'button' || tag === 'a') && rawText.length < 50) {
+                  selector = `text="${rawText}"`; quality = 'fair';
+                } else {
+                  const cls = className.split(' ').filter(Boolean).slice(0, 2).join('.');
+                  selector = tag + (cls ? '.' + cls : '');
+                  quality = 'poor';
+                }
+
+                let category = 'other';
+                if (tag === 'button' || (tag === 'input' && (type === 'button' || type === 'submit' || type === 'reset')) || role === 'button') { category = 'button'; }
+                else if ((tag === 'input' && type === 'checkbox') || role === 'checkbox') { category = 'checkbox'; }
+                else if ((tag === 'input' && type === 'radio') || role === 'radio') { category = 'radio'; }
+                else if (tag === 'input' || role === 'textbox') { category = 'input'; }
+                else if (tag === 'select' || role === 'combobox') { category = 'select'; }
+                else if (tag === 'textarea') { category = 'textarea'; }
+                else if (tag === 'a') { category = 'link'; }
+                else if (tag === 'form') { category = 'form'; }
+
+                // Simple xpath
+                const getXPath = (e: Element): string => {
+                  if (e.id) { return `//*[@id="${e.id}"]`; }
+                  const parts: string[] = [];
+                  let node: Element | null = e;
+                  while (node && node.nodeType === 1) {
+                    let idx = 1;
+                    let sib = node.previousSibling;
+                    while (sib) {
+                      if (sib.nodeType === 1 && (sib as Element).tagName === node.tagName) { idx++; }
+                      sib = sib.previousSibling;
+                    }
+                    parts.unshift(node.tagName.toLowerCase() + '[' + idx + ']');
+                    node = node.parentElement;
+                  }
+                  return '/' + parts.join('/');
+                };
+
+                results.push({
+                  uid: String(++uid), tag, type, elementId: elId, name, ariaLabel,
+                  placeholder, dataTestId, text: rawText, selector,
+                  xpath: getXPath(el), role, className, href, category, selectorQuality: quality,
+                });
+              });
+            } catch { /* skip bad selectors */ }
+          });
+
+          return results;
+        };
+
+        /** Try direct fetch, then CORS proxy fallback */
+        const fetchHTML = async (): Promise<string> => {
+          // 1. Direct fetch
+          try {
+            const res = await fetch(targetUrl);
+            if (res.ok) { return await res.text(); }
+          } catch { /* CORS or network error — try proxy */ }
+
+          // 2. allorigins CORS proxy
+          try {
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+            const res = await fetch(proxyUrl);
+            if (res.ok) { return await res.text(); }
+          } catch { /* proxy failed too */ }
+
+          // 3. corsproxy.io fallback
+          const proxyUrl2 = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+          const res = await fetch(proxyUrl2);
+          return await res.text();
+        };
+
+        fetchHTML()
+          .then(html => {
+            const elements = extractFromHtml(html);
+            window.postMessage({ type: 'DOM_EXTRACTED', payload: { elements, url: targetUrl } }, '*');
+          })
+          .catch((err: Error) => {
+            window.postMessage({
+              type: 'DOM_EXTRACT_ERROR',
+              payload: `Failed to fetch "${targetUrl}": ${err.message}. Try a URL that allows cross-origin requests, or run the VS Code extension (F5) for full Playwright-based extraction.`,
+            }, '*');
+          });
       }
     },
     getState: () => null,
