@@ -44,56 +44,49 @@ function normalizeUrl(raw: string): string {
 
 /* ── ActionVisualizer — main preview component ─────────────────── */
 function ActionVisualizer({ url, running, status, activeAction, activeLabel,
-  stepIdx, totalSteps, steps, activeStepIdx, screenshotData, prevScreenshotData }: {
+  stepIdx, totalSteps, steps, activeStepIdx, screenshotData, canvasRef, hasLiveFrame }: {
   url: string; running: boolean; status: string;
   activeAction: string; activeLabel: string; activeValue?: string;
   stepIdx: number|null; totalSteps: number;
   steps: TestStep[]; activeStepIdx: number|null;
-  screenshotData: string|null; prevScreenshotData: string|null;
+  screenshotData: string|null;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
+  hasLiveFrame: boolean;
 }) {
   const color   = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
   const enabled  = steps.filter(s => s.enabled !== false);
-
-  const [fadeKey, setFadeKey] = useState(0);
-
-  useEffect(() => {
-    if (screenshotData) {
-      setFadeKey(k => k + 1);
-    }
-  }, [screenshotData]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#0b0f18] relative">
 
       {/* ── Action hero area ── */}
       <div className="flex-1 flex flex-col items-center justify-center overflow-hidden relative">
-        
-        {/* Render Screenshots */}
-        {(screenshotData || prevScreenshotData) ? (
-          <div className="w-full h-full relative bg-slate-900 flex items-center justify-center overflow-hidden group">
-            {/* Previous Screenshot (underneath, for crossfade) */}
-            {prevScreenshotData && (
+
+        {/* Live canvas — always in DOM so drawImage can target it at any time */}
+        <canvas
+          ref={canvasRef}
+          width={1280}
+          height={720}
+          className={`absolute inset-0 w-full h-full transition-opacity duration-150 ${hasLiveFrame ? 'opacity-100' : 'opacity-0'}`}
+          style={{ objectFit: 'contain', display: 'block', zIndex: hasLiveFrame ? 5 : 0 }}
+        />
+
+        {/* Content shown when we have any visual (live frame or final screenshot) */}
+        {(hasLiveFrame || screenshotData) ? (
+          <div className="absolute inset-0 bg-slate-900 flex items-center justify-center overflow-hidden">
+            {/* Final screenshot fallback — visible only before first live frame */}
+            {!hasLiveFrame && screenshotData && (
               <img
-                src={`data:image/jpeg;base64,${prevScreenshotData}`}
-                className={`absolute object-contain max-w-full max-h-full transition-opacity duration-500 ease-in-out ${screenshotData ? 'opacity-0' : 'opacity-100'}`}
-                alt="Previous Playwright State"
-              />
-            )}
-            
-            {/* Current Screenshot */}
-            {screenshotData && (
-              <img
-                key={fadeKey}
                 src={`data:image/jpeg;base64,${screenshotData}`}
-                className="absolute object-contain max-w-full max-h-full transition-opacity duration-300 ease-in-out animate-in fade-in"
-                alt="Live Playwright State"
+                className="absolute inset-0 w-full h-full object-contain"
+                alt="Last Playwright State"
               />
             )}
 
             {/* Action Overlay */}
             {running && activeAction && (
-              <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-300 z-10 pointer-events-none">
+              <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none" style={{ zIndex: 20 }}>
                 <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-md"
                   style={{ borderColor: color+'50', background: color+'18' }}>
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: color+'30' }}>
@@ -110,10 +103,10 @@ function ActionVisualizer({ url, running, status, activeAction, activeLabel,
                 </div>
               </div>
             )}
-            
-            {/* Completion Overlays over Screenshot */}
+
+            {/* Completion Overlays */}
             {!running && status === 'passed' && (
-              <div className="absolute inset-0 bg-emerald-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
+              <div className="absolute inset-0 bg-emerald-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in" style={{ zIndex: 20 }}>
                 <div className="flex items-center gap-3 bg-emerald-950/80 border border-emerald-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
                   <CheckCircle className="w-8 h-8 text-emerald-400" />
                   <div>
@@ -125,7 +118,7 @@ function ActionVisualizer({ url, running, status, activeAction, activeLabel,
             )}
 
             {!running && status === 'failed' && (
-              <div className="absolute inset-0 bg-red-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in">
+              <div className="absolute inset-0 bg-red-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in" style={{ zIndex: 20 }}>
                 <div className="flex items-center gap-3 bg-red-950/80 border border-red-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
                   <XCircle className="w-8 h-8 text-red-400" />
                   <div>
@@ -137,7 +130,7 @@ function ActionVisualizer({ url, running, status, activeAction, activeLabel,
             )}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-5 px-6 py-4">
+          <div className="flex flex-col items-center justify-center gap-5 px-6 py-4" style={{ zIndex: 1 }}>
             {/* Idle */}
             {!running && status === 'idle' && (
               <div className="flex flex-col items-center gap-3 text-center">
@@ -223,9 +216,11 @@ export default function RunnerPage() {
   const [displayUrl, setDisplayUrl]       = useState('');
   const [scrollDir, setScrollDir]         = useState<'up'|'down'|null>(null);
   const [screenshotData, setScreenshotData] = useState<string|null>(null);
-  const [prevScreenshotData, setPrevScreenshotData] = useState<string|null>(null);
+  const [hasLiveFrame, setHasLiveFrame]     = useState(false);
 
-  const logEndRef  = useRef<HTMLDivElement>(null);
+  const logEndRef    = useRef<HTMLDivElement>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const imgRef       = useRef(new Image());
   const autoRunFired = useRef(false);
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
@@ -280,13 +275,27 @@ export default function RunnerPage() {
   });
 
   useVSCodeListener('TEST_RUN_SCREENSHOT', (payload) => {
-    const data = payload as { stepIdx: number; action: string; phase: string; color: string; screenshotBase64: string };
+    const data = payload as { stepIdx: number; action: string; phase: string; screenshotBase64: string };
     if (data.screenshotBase64) {
-      setPrevScreenshotData(screenshotData);
       setScreenshotData(data.screenshotBase64);
     }
   });
 
+  useVSCodeListener('TEST_RUN_FRAME', (payload) => {
+    const data = payload as { frameBase64: string };
+    if (!data.frameBase64) return;
+    const img = imgRef.current;
+    img.onload = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, 1280, 720);
+        setHasLiveFrame(true);
+      }
+    };
+    img.src = `data:image/jpeg;base64,${data.frameBase64}`;
+  });
 
   useVSCodeListener('TEST_RUN_COMPLETE', (payload) => {
     const p = payload as { passed: boolean };
@@ -315,7 +324,9 @@ export default function RunnerPage() {
 
     setLogs([]); setRunning(true); setStatus('running');
     setActiveStepIdx(null); setActiveAction(''); setActiveLabel('');
-    setScreenshotData(null); setPrevScreenshotData(null);
+    setScreenshotData(null); setHasLiveFrame(false);
+    const canvas = canvasRef.current;
+    if (canvas) { const ctx = canvas.getContext('2d'); ctx?.clearRect(0, 0, 1280, 720); }
     pushLog(`▶  Starting: "${currentFlow.name}"`, 'info');
     pushLog(`Steps: ${currentFlow.steps.filter(s=>s.enabled).length} enabled of ${currentFlow.steps.length} total`, 'info');
     pushLog('Generating test file…', 'info');
@@ -326,7 +337,9 @@ export default function RunnerPage() {
   const handleClear = () => {
     setLogs([]); setStatus('idle'); setRunning(false);
     setActiveStepIdx(null); setActiveAction(''); setActiveLabel(''); setActiveValue('');
-    setScrollDir(null); setScreenshotData(null); setPrevScreenshotData(null);
+    setScrollDir(null); setScreenshotData(null); setHasLiveFrame(false);
+    const canvas = canvasRef.current;
+    if (canvas) { const ctx = canvas.getContext('2d'); ctx?.clearRect(0, 0, 1280, 720); }
   };
 
   // Auto-run when navigated from Builder's Run button
@@ -488,7 +501,8 @@ export default function RunnerPage() {
                 steps={currentFlow.steps}
                 activeStepIdx={activeStepIdx}
                 screenshotData={screenshotData}
-                prevScreenshotData={prevScreenshotData}
+                canvasRef={canvasRef}
+                hasLiveFrame={hasLiveFrame}
               />
             </div>
           </div>

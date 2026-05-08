@@ -224,7 +224,7 @@ export function FlowProvider({ children }: { children: React.ReactNode }) {
       action,
       label: ACTION_LABELS[action] ?? action,
       enabled: true,
-      timeout: 5000,
+      timeout: 15000,
     };
     dispatch({ type: 'ADD_STEP', step });
   }, []);

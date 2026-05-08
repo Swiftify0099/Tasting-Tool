@@ -18,6 +18,7 @@ const CATEGORY_TABS: { id: DOMCategory | 'all'; label: string; icon: React.Eleme
   { id: 'select',   label: 'Selects',   icon: List,         color: 'text-amber-400' },
   { id: 'link',     label: 'Links',     icon: Link2,        color: 'text-sky-400'   },
   { id: 'checkbox', label: 'Checkboxes',icon: CheckSquare,  color: 'text-green-400' },
+  { id: 'radio',    label: 'Radios',    icon: CheckSquare,  color: 'text-teal-400'  },
   { id: 'textarea', label: 'Textareas', icon: FileText,     color: 'text-pink-400'  },
   { id: 'form',     label: 'Forms',     icon: Tag,          color: 'text-orange-400'},
 ];

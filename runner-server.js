@@ -112,12 +112,17 @@ app.post('/api/extract-dom', async (req, res) => {
             const role = el.getAttribute('role') || tag;
             const href = el.getAttribute('href') || '';
             const type = el.getAttribute('type') || tag;
-            const rawText = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+            const isRadioOrCheck = tag === 'input' && (type === 'radio' || type === 'checkbox');
+            const rawText = isRadioOrCheck && !(el.textContent || '').trim()
+              ? (el.value ? `${name || type}: ${el.value}` : name || `${type} input`)
+              : (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
             const className = typeof el.className === 'string' ? el.className : '';
 
-            // Skip hidden elements
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden') return;
+            // Skip hidden elements (radio/checkbox are often hidden by custom CSS — keep them)
+            if (!isRadioOrCheck) {
+              const style = window.getComputedStyle(el);
+              if (style.display === 'none' || style.visibility === 'hidden') return;
+            }
 
             let selector = '';
             let quality = 'poor';
@@ -182,6 +187,27 @@ app.post('/api/run-test', async (req, res) => {
   };
 
   let browser;
+  let frameLoopActive = false;
+  let frameLoopTimer = null;
+
+  const startFrameLoop = (page) => {
+    frameLoopActive = true;
+    const loop = async () => {
+      if (!frameLoopActive) return;
+      try {
+        const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+        send('TEST_RUN_FRAME', { frameBase64: buf.toString('base64') });
+      } catch (_) {}
+      if (frameLoopActive) frameLoopTimer = setTimeout(loop, 67);
+    };
+    loop();
+  };
+
+  const stopFrameLoop = () => {
+    frameLoopActive = false;
+    if (frameLoopTimer) { clearTimeout(frameLoopTimer); frameLoopTimer = null; }
+  };
+
   try {
     send('TEST_RUN_LOG', { logType: 'info', message: '▶  Starting Playwright runner…' });
     send('TEST_RUN_LOG', { logType: 'info', message: 'Browser: chromium (headless)' });
@@ -202,6 +228,8 @@ app.post('/api/run-test', async (req, res) => {
     const page = await context.newPage();
     send('TEST_RUN_LOG', { logType: 'info', message: 'Browser launched successfully' });
 
+    startFrameLoop(page);
+
     const steps = (flow?.steps || []).filter(s => s.enabled !== false);
     const baseUrl = flow?.baseUrl && flow.baseUrl !== 'https://' ? flow.baseUrl : '';
 
@@ -216,17 +244,13 @@ app.post('/api/run-test', async (req, res) => {
 
       try {
         await executeStep(page, step, baseUrl);
-
-        const buf = await page.screenshot({ type: 'jpeg', quality: 75, fullPage: false });
-        const b64 = buf.toString('base64');
-        send('TEST_RUN_SCREENSHOT', { stepIdx: i, action: step.action, phase: 'after', screenshotBase64: b64 });
-
       } catch (stepErr) {
         const errMsg = stepErr.message || String(stepErr);
         send('TEST_RUN_LOG', { logType: 'error', message: `Step ${i + 1} failed: ${errMsg.split('\n')[0]}` });
 
+        stopFrameLoop();
         try {
-          const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+          const buf = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false });
           send('TEST_RUN_SCREENSHOT', { stepIdx: i, action: step.action, phase: 'error', screenshotBase64: buf.toString('base64') });
         } catch (_) {}
 
@@ -237,6 +261,12 @@ app.post('/api/run-test', async (req, res) => {
       }
     }
 
+    stopFrameLoop();
+    try {
+      const buf = await page.screenshot({ type: 'jpeg', quality: 80, fullPage: false });
+      send('TEST_RUN_SCREENSHOT', { stepIdx: steps.length - 1, action: 'complete', phase: 'final', screenshotBase64: buf.toString('base64') });
+    } catch (_) {}
+
     send('TEST_RUN_LOG', { logType: 'success', message: `✓  All ${steps.length} step${steps.length !== 1 ? 's' : ''} passed` });
     send('TEST_RUN_LOG', { logType: 'info', message: `${steps.length} passed (${((Date.now() % 100000) / 1000).toFixed(1)}s)` });
     send('TEST_RUN_COMPLETE', { passed: true });
@@ -246,6 +276,7 @@ app.post('/api/run-test', async (req, res) => {
     send('TEST_RUN_LOG', { logType: 'error', message: `Runner error: ${msg.split('\n')[0]}` });
     send('TEST_RUN_COMPLETE', { passed: false });
   } finally {
+    stopFrameLoop();
     if (browser) await browser.close().catch(() => {});
     res.end();
   }

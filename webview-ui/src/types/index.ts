@@ -109,6 +109,7 @@ export type MessageType =
   | 'TEST_GENERATED' | 'ERROR' | 'OPEN_FILE' | 'GET_FLOWS' | 'FLOWS_LIST'
   | 'DELETE_FLOW' | 'FLOW_DELETED' | 'RUN_TEST' | 'TEST_RESULT' | 'EXPORT_JSON'
   | 'TEST_RUN_LOG' | 'TEST_RUN_STEP' | 'TEST_RUN_SCREENSHOT' | 'TEST_RUN_COMPLETE'
+  | 'TEST_RUN_FRAME'
   | 'EXTRACT_DOM' | 'DOM_EXTRACTED' | 'DOM_EXTRACT_ERROR' | 'AI_GENERATE_FROM_DOM';
 
 export interface VSCodeMessage { type: MessageType; payload?: unknown; }
