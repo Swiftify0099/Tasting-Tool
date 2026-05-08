@@ -488,57 +488,66 @@ async function dismissOverlays(page, send) {
   }
 }
 
+// ── Robust DOM extraction (main frame via page.evaluate) ──────────────────
 async function extractPageDOM(page) {
-  return await page.evaluate(() => {
+  return page.evaluate(() => {
     const getSelector = (el) => {
       const dt = el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-qa');
       if (dt) return `[data-testid="${dt}"]`;
-      if (el.id) return `#${el.id}`;
-      if (el.getAttribute('name')) return `[name="${el.getAttribute('name')}"]`;
-      if (el.getAttribute('aria-label')) return `[aria-label="${el.getAttribute('aria-label')}"]`;
-      if (el.getAttribute('placeholder')) return `[placeholder="${el.getAttribute('placeholder')}"]`;
+      if (el.id && /^[a-zA-Z]/.test(el.id)) return `#${el.id}`;
+      if (el.getAttribute('name'))         return `[name="${el.getAttribute('name')}"]`;
+      if (el.getAttribute('aria-label'))   return `[aria-label="${el.getAttribute('aria-label')}"]`;
+      if (el.getAttribute('placeholder'))  return `[placeholder="${el.getAttribute('placeholder')}"]`;
       const tag = el.tagName.toLowerCase();
       const cls = (typeof el.className === 'string' ? el.className : '').split(' ').filter(Boolean).slice(0, 2).join('.');
       return tag + (cls ? '.' + cls : '');
     };
     const getLabel = (el) => {
       if (el.id) {
-        const lbl = document.querySelector(`label[for="${el.id}"]`);
-        if (lbl) return lbl.textContent?.trim() || '';
+        const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lbl) return (lbl.textContent || '').trim().slice(0, 80);
       }
-      const parent = el.closest('label');
-      if (parent) return (parent.textContent || '').trim().slice(0, 60);
+      const wrapped = el.closest('label');
+      if (wrapped) return (wrapped.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+      const prev = el.previousElementSibling;
+      if (prev && prev.tagName === 'LABEL') return (prev.textContent || '').trim().slice(0, 80);
       return el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
     };
+    // Looser visibility: just skip display:none (hidden/opacity still often focusable)
     const isVisible = (el) => {
+      if (!el.offsetParent && el.tagName !== 'BODY') return false;
       const s = window.getComputedStyle(el);
-      return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+      return s.display !== 'none';
     };
 
     const inputs = [];
     document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])').forEach(el => {
       if (!isVisible(el)) return;
       inputs.push({
-        selector: getSelector(el), type: el.type || 'text', label: getLabel(el),
-        placeholder: el.placeholder || '', required: el.required,
-        maxLength: el.maxLength > 0 ? el.maxLength : null,
-        minLength: el.minLength > 0 ? el.minLength : null,
-        pattern: el.getAttribute('pattern') || null,
-        autocomplete: el.getAttribute('autocomplete') || null,
+        selector:     getSelector(el),
+        type:         el.type || 'text',
+        label:        getLabel(el),
+        placeholder:  el.placeholder || '',
+        required:     el.required,
+        maxLength:    el.maxLength > 0 && el.maxLength < 100000 ? el.maxLength : null,
+        minLength:    el.minLength > 0 ? el.minLength : null,
+        pattern:      el.getAttribute('pattern') || null,
+        autocomplete: el.getAttribute('autocomplete') || el.getAttribute('name') || null,
+        name:         el.getAttribute('name') || '',
       });
     });
 
     const selects = [];
     document.querySelectorAll('select').forEach(el => {
       if (!isVisible(el)) return;
-      const options = Array.from(el.options).map(o => ({ value: o.value, text: o.text })).filter(o => o.value).slice(0, 8);
-      selects.push({ selector: getSelector(el), label: getLabel(el), options });
+      const options = Array.from(el.options).map(o => ({ value: o.value, text: (o.text || '').trim() })).filter(o => o.value).slice(0, 10);
+      selects.push({ selector: getSelector(el), label: getLabel(el), options, name: el.getAttribute('name') || '' });
     });
 
     const textareas = [];
     document.querySelectorAll('textarea').forEach(el => {
       if (!isVisible(el)) return;
-      textareas.push({ selector: getSelector(el), label: getLabel(el), placeholder: el.placeholder || '' });
+      textareas.push({ selector: getSelector(el), label: getLabel(el), placeholder: el.placeholder || '', name: el.getAttribute('name') || '' });
     });
 
     const buttons = [];
@@ -546,12 +555,141 @@ async function extractPageDOM(page) {
       if (!isVisible(el)) return;
       const text = (el.textContent || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
       if (!text) return;
-      const type = el.getAttribute('type') || 'button';
-      buttons.push({ selector: getSelector(el), text, type });
+      buttons.push({ selector: getSelector(el), text, type: el.getAttribute('type') || 'button' });
     });
 
     return { inputs, selects, textareas, buttons, title: document.title, url: window.location.href };
-  });
+  }).catch(() => ({ inputs: [], selects: [], textareas: [], buttons: [], title: '', url: '' }));
+}
+
+// ── Playwright-locator fallback (works when page.evaluate returns nothing) ─
+async function extractPageDOMFallback(page) {
+  const inputs = [], selects = [], textareas = [], buttons = [];
+
+  const safeAttr = async (loc, attr) => (await loc.getAttribute(attr).catch(() => null)) || '';
+  const safeText = async (loc) => ((await loc.textContent().catch(() => null)) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const safeVis  = async (loc) => loc.isVisible({ timeout: 400 }).catch(() => false);
+
+  const buildSel = (id, name, ariaLabel, placeholder, tag, i) => {
+    if (id && /^[a-zA-Z]/.test(id)) return `#${id}`;
+    if (name)       return `[name="${name}"]`;
+    if (ariaLabel)  return `[aria-label="${ariaLabel}"]`;
+    if (placeholder) return `[placeholder="${placeholder}"]`;
+    return `${tag} >> nth=${i}`;
+  };
+
+  // Inputs
+  const inputLoc = page.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])');
+  const iCount   = await inputLoc.count().catch(() => 0);
+  for (let i = 0; i < Math.min(iCount, 25); i++) {
+    try {
+      const el = inputLoc.nth(i);
+      if (!await safeVis(el)) continue;
+      const type        = await safeAttr(el, 'type') || 'text';
+      const id          = await safeAttr(el, 'id');
+      const name        = await safeAttr(el, 'name');
+      const placeholder = await safeAttr(el, 'placeholder');
+      const ariaLabel   = await safeAttr(el, 'aria-label');
+      const autocomplete = await safeAttr(el, 'autocomplete') || name;
+      const rawMax      = await safeAttr(el, 'maxlength');
+      const maxLength   = rawMax && parseInt(rawMax) > 0 && parseInt(rawMax) < 100000 ? parseInt(rawMax) : null;
+      const selector    = buildSel(id, name, ariaLabel, placeholder, 'input', i);
+      inputs.push({ selector, type, name, label: ariaLabel || placeholder || name || id, placeholder, required: false, maxLength, autocomplete });
+    } catch (_) {}
+  }
+
+  // Selects
+  const selectLoc = page.locator('select');
+  const sCount    = await selectLoc.count().catch(() => 0);
+  for (let i = 0; i < Math.min(sCount, 10); i++) {
+    try {
+      const el   = selectLoc.nth(i);
+      if (!await safeVis(el)) continue;
+      const id   = await safeAttr(el, 'id');
+      const name = await safeAttr(el, 'name');
+      const al   = await safeAttr(el, 'aria-label');
+      const opts = await el.evaluate(s => Array.from(s.options).map(o => ({ value: o.value, text: o.text.trim() })).filter(o => o.value).slice(0, 10)).catch(() => []);
+      selects.push({ selector: buildSel(id, name, al, '', 'select', i), label: al || name || id, options: opts, name });
+    } catch (_) {}
+  }
+
+  // Textareas
+  const taLoc  = page.locator('textarea');
+  const taCount = await taLoc.count().catch(() => 0);
+  for (let i = 0; i < Math.min(taCount, 5); i++) {
+    try {
+      const el          = taLoc.nth(i);
+      if (!await safeVis(el)) continue;
+      const id          = await safeAttr(el, 'id');
+      const name        = await safeAttr(el, 'name');
+      const placeholder = await safeAttr(el, 'placeholder');
+      const al          = await safeAttr(el, 'aria-label');
+      textareas.push({ selector: buildSel(id, name, al, placeholder, 'textarea', i), label: al || placeholder || name || id, placeholder, name });
+    } catch (_) {}
+  }
+
+  // Buttons
+  const btnLoc = page.locator('button, input[type="submit"], input[type="button"], [role="button"]');
+  const bCount = await btnLoc.count().catch(() => 0);
+  for (let i = 0; i < Math.min(bCount, 20); i++) {
+    try {
+      const el   = btnLoc.nth(i);
+      if (!await safeVis(el)) continue;
+      const text = await safeText(el) || await safeAttr(el, 'value') || await safeAttr(el, 'aria-label');
+      if (!text) continue;
+      const id   = await safeAttr(el, 'id');
+      const type = await safeAttr(el, 'type') || 'button';
+      const tag  = await el.evaluate(e => e.tagName.toLowerCase()).catch(() => 'button');
+      const cls  = await el.evaluate(e => [...e.classList].slice(0, 2).join('.')).catch(() => '');
+      const selector = id && /^[a-zA-Z]/.test(id) ? `#${id}` : `${tag}${cls ? '.' + cls : ''} >> nth=${i}`;
+      buttons.push({ selector, text, type });
+    } catch (_) {}
+  }
+
+  return { inputs, selects, textareas, buttons, title: await page.title().catch(() => ''), url: page.url() };
+}
+
+// ── Try forms inside top-level iframes ─────────────────────────────────────
+async function extractFromIframes(page) {
+  const frames = page.frames().filter(f => f !== page.mainFrame());
+  for (const frame of frames.slice(0, 5)) {
+    try {
+      const result = await frame.evaluate(() => {
+        const isVis = (el) => { const s = window.getComputedStyle(el); return s.display !== 'none'; };
+        const getS  = (el) => {
+          if (el.id && /^[a-zA-Z]/.test(el.id)) return `#${el.id}`;
+          if (el.getAttribute('name')) return `[name="${el.getAttribute('name')}"]`;
+          if (el.getAttribute('placeholder')) return `[placeholder="${el.getAttribute('placeholder')}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const getL = (el) => el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
+        const inputs = [], selects = [], textareas = [], buttons = [];
+        document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset])').forEach(el => {
+          if (!isVis(el)) return;
+          inputs.push({ selector: getS(el), type: el.type||'text', label: getL(el), placeholder: el.placeholder||'', required: el.required, maxLength: el.maxLength>0&&el.maxLength<100000?el.maxLength:null, name: el.getAttribute('name')||'', autocomplete: el.getAttribute('autocomplete')||el.getAttribute('name')||'' });
+        });
+        document.querySelectorAll('select').forEach(el => {
+          if (!isVis(el)) return;
+          const options = Array.from(el.options).map(o=>({value:o.value,text:o.text.trim()})).filter(o=>o.value).slice(0,10);
+          selects.push({ selector: getS(el), label: getL(el), options, name: el.getAttribute('name')||'' });
+        });
+        document.querySelectorAll('textarea').forEach(el => {
+          if (!isVis(el)) return;
+          textareas.push({ selector: getS(el), label: getL(el), placeholder: el.placeholder||'', name: el.getAttribute('name')||'' });
+        });
+        document.querySelectorAll('button, input[type=submit], [role=button]').forEach(el => {
+          if (!isVis(el)) return;
+          const text = (el.textContent||el.value||el.getAttribute('aria-label')||'').trim().replace(/\s+/g,' ').slice(0,60);
+          if (text) buttons.push({ selector: getS(el), text, type: el.getAttribute('type')||'button' });
+        });
+        return { inputs, selects, textareas, buttons };
+      }).catch(() => null);
+      if (result && (result.inputs.length > 0 || result.selects.length > 0)) {
+        return { ...result, title: await frame.title().catch(() => ''), url: frame.url(), fromIframe: true };
+      }
+    } catch (_) {}
+  }
+  return null;
 }
 
 async function callClaude(apiKey, model, domData, url) {
@@ -1230,15 +1368,41 @@ app.post('/api/smart-test', async (req, res) => {
 
     const launchOpts = {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      args: [
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--allow-running-insecure-content',
+        '--disable-web-security',
+        '--lang=en-US,en',
+        '--window-size=1280,720',
+      ],
     };
     if (CHROMIUM_PATH) launchOpts.executablePath = CHROMIUM_PATH;
 
     browser = await chromium.launch(launchOpts);
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 720 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+      acceptDownloads: false,
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
     });
+
+    // ── Stealth: spoof automation signals before any page script runs ───────
+    await ctx.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins',   { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      window.chrome = { runtime: {} };
+      const origQuery = window.navigator.permissions?.query?.bind(window.navigator.permissions);
+      if (origQuery) {
+        window.navigator.permissions.query = (p) =>
+          p.name === 'notifications' ? Promise.resolve({ state: 'denied' }) : origQuery(p);
+      }
+    });
+
     const page = await ctx.newPage();
 
     // Auto-dismiss JS dialogs
@@ -1247,33 +1411,92 @@ app.post('/api/smart-test', async (req, res) => {
       await d.dismiss().catch(() => {});
     });
 
-    send('LOG', { level: 'success', message: '✓ Browser launched' });
+    // Block heavy assets that slow things down and aren't needed for form detection
+    await page.route('**/*.{mp4,webm,ogg,wav,mp3,flac,avi,mov,woff,woff2,ttf,otf,eot}', r => r.abort()).catch(() => {});
+
+    send('LOG', { level: 'success', message: '✓ Browser launched (stealth mode)' });
     startFrames(page);
 
+    // ── Navigate ──────────────────────────────────────────────────────────
     send('LOG', { level: 'info', message: `\n🌐 Navigating to ${url}…` });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
-    send('LOG', { level: 'success', message: `✓ Loaded: "${await page.title()}"` });
+    let navOk = false;
+    for (const strategy of ['domcontentloaded', 'load', 'commit']) {
+      try {
+        await page.goto(url, { waitUntil: strategy, timeout: 30000 });
+        navOk = true;
+        break;
+      } catch (e) {
+        send('LOG', { level: 'warn', message: `  ↻ Retrying navigation (${e.message.split('\n')[0].slice(0, 60)})` });
+      }
+    }
+    if (!navOk) throw new Error('Could not navigate to the page after 3 attempts');
 
-    send('LOG', { level: 'info', message: '\n🧹 Dismissing overlays…' });
+    await page.waitForTimeout(2000);
+    const pageTitle = await page.title().catch(() => '');
+    send('LOG', { level: 'success', message: `✓ Loaded: "${pageTitle || url}"` });
+
+    // ── Overlay dismissal ─────────────────────────────────────────────────
+    send('LOG', { level: 'info', message: '\n🧹 Dismissing popups & overlays…' });
     await dismissOverlays(page, send);
 
+    // ── Wait for dynamic content (SPAs / lazy forms) ──────────────────────
     send('LOG', { level: 'info', message: '\n⏳ Waiting for dynamic content…' });
-    await page.waitForLoadState('networkidle', { timeout: 7000 }).catch(() => {});
-    await page.waitForTimeout(1200);
-    await page.evaluate(() => window.scrollBy(0, 300)).catch(() => {});
-    await page.waitForTimeout(400);
-    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
-    await page.waitForTimeout(300);
+    // Try networkidle but don't block on it (SPAs often never reach networkidle)
+    await page.waitForLoadState('networkidle', { timeout: 6000 }).catch(() => {});
+    await page.waitForTimeout(800);
 
+    // Progressive scroll to trigger lazy-loaded form fields
+    for (const pct of [0.25, 0.5, 0.75, 0]) {
+      await page.evaluate((p) => window.scrollTo(0, document.body.scrollHeight * p), pct).catch(() => {});
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(400);
+
+    // ── DOM Extraction — 4-strategy cascade ───────────────────────────────
     send('LOG', { level: 'info', message: '\n🔬 Analyzing form fields…' });
-    const dom = await extractPageDOM(page);
-    send('LOG', { level: 'info', message: `   Found: ${dom.inputs.length} inputs · ${dom.selects.length} selects · ${dom.textareas.length} textareas · ${dom.buttons.length} buttons` });
+    let dom = await extractPageDOM(page);
+    let domSource = 'main-frame evaluate';
+
+    const hasFields = (d) => d && (d.inputs.length > 0 || d.selects.length > 0 || d.textareas.length > 0);
+
+    // Strategy 2: scroll more and retry page.evaluate
+    if (!hasFields(dom)) {
+      send('LOG', { level: 'info', message: '  ↻ Scrolling deeper and retrying…' });
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+      await page.waitForTimeout(800);
+      await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+      await page.waitForTimeout(400);
+      dom = await extractPageDOM(page);
+      domSource = 'main-frame evaluate (retry)';
+    }
+
+    // Strategy 3: Playwright locator API (works through shadow DOM, custom elements)
+    if (!hasFields(dom)) {
+      send('LOG', { level: 'info', message: '  ↻ Trying locator-based extraction (shadow DOM / custom elements)…' });
+      dom = await extractPageDOMFallback(page);
+      domSource = 'playwright locator API';
+    }
+
+    // Strategy 4: search inside iframes
+    if (!hasFields(dom)) {
+      send('LOG', { level: 'info', message: '  ↻ Checking embedded iframes…' });
+      const iframeDom = await extractFromIframes(page);
+      if (iframeDom && hasFields(iframeDom)) {
+        dom = iframeDom;
+        domSource = `iframe (${iframeDom.url})`;
+      }
+    }
+
+    send('LOG', { level: hasFields(dom) ? 'success' : 'warn',
+      message: `   [${domSource}] ${dom.inputs.length} inputs · ${dom.selects.length} selects · ${dom.textareas.length} textareas · ${dom.buttons.length} buttons` });
     send('DOM_SUMMARY', { inputs: dom.inputs.length, selects: dom.selects.length, textareas: dom.textareas.length, buttons: dom.buttons.length });
 
-    if (dom.inputs.length === 0 && dom.selects.length === 0 && dom.textareas.length === 0) {
-      send('LOG', { level: 'warn', message: '  ⚠ No fillable form fields found on this page' });
-      send('LOG', { level: 'info', message: '  Try a page that has a login, signup, or contact form' });
+    if (!hasFields(dom)) {
+      send('LOG', { level: 'warn', message: '\n  ⚠ No fillable form fields found — possible reasons:' });
+      send('LOG', { level: 'info', message: '     • Page uses bot/CAPTCHA protection (Cloudflare, reCAPTCHA)' });
+      send('LOG', { level: 'info', message: '     • Form renders only after user interaction (click a button first?)' });
+      send('LOG', { level: 'info', message: '     • Page requires login before showing a form' });
+      send('LOG', { level: 'info', message: '     • Try a direct link to a login/signup/contact form page' });
       send('COMPLETE', { passed: 0, failed: 0, total: 0 });
       return;
     }
