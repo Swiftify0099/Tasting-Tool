@@ -890,6 +890,449 @@ app.post('/api/ai-live-test', async (req, res) => {
   }
 });
 
+// ── Smart Tester (no AI required) ────────────────────────────────────────
+
+function detectFieldType(field) {
+  const type = (field.type || '').toLowerCase();
+  const combined = [field.name, field.label, field.placeholder, field.autocomplete]
+    .join(' ').toLowerCase().replace(/[-_]/g, ' ');
+
+  if (type === 'email' || /\bemail\b/.test(combined)) return 'email';
+  if (type === 'password' || /password|passw/.test(combined)) return 'password';
+  if (type === 'tel' || /phone|mobile|cell|\btel\b/.test(combined)) return 'phone';
+  if (type === 'number' || /\bage\b|quantity|amount|\bcount\b|\bnum\b/.test(combined)) return 'number';
+  if (type === 'url' || /\burl\b|website|\bsite\b/.test(combined)) return 'url';
+  if (type === 'date' || /\bdate\b|birth|dob/.test(combined)) return 'date';
+  if (type === 'checkbox') return 'checkbox';
+  if (type === 'radio') return 'radio';
+  if (/\bname\b|first name|last name|full name|username/.test(combined)) return 'name';
+  if (/address|street|city/.test(combined)) return 'address';
+  if (/zip|postal/.test(combined)) return 'zip';
+  if (/message|comment|description|feedback|note/.test(combined)) return 'message';
+  if (/search|query|keyword/.test(combined)) return 'search';
+  return 'text';
+}
+
+function getTestValues(fieldType, maxLength) {
+  const max = (maxLength && maxLength > 0 && maxLength < 9999) ? maxLength : 255;
+  const clamp = (n) => Math.min(n, max);
+
+  const defs = {
+    email: {
+      valid:          'john.doe@testmail.example.com',
+      boundary_min:   'a@b.co',
+      boundary_max:   'a'.repeat(clamp(180)) + '@ex.com',
+      invalid:        'not-an-email-address',
+    },
+    password: {
+      valid:          'SecureP@ss123!',
+      boundary_min:   'Ab1!',
+      boundary_max:   'Aa1!' + 'x'.repeat(Math.max(0, clamp(120) - 4)),
+      invalid:        '123',
+    },
+    phone: {
+      valid:          '+1-555-010-0100',
+      boundary_min:   '1',
+      boundary_max:   '5'.repeat(clamp(20)),
+      invalid:        'abc-xyz-efgh',
+    },
+    number: {
+      valid:          '42',
+      boundary_min:   '0',
+      boundary_max:   '9'.repeat(Math.min(clamp(10), 9)),
+      invalid:        'not-a-number',
+    },
+    url: {
+      valid:          'https://example.com',
+      boundary_min:   'x',
+      boundary_max:   'https://' + 'a'.repeat(clamp(200)) + '.com',
+      invalid:        'not a url',
+    },
+    date: {
+      valid:          '2000-06-15',
+      boundary_min:   '1900-01-01',
+      boundary_max:   '2099-12-31',
+      invalid:        '99/99/9999',
+    },
+    name: {
+      valid:          'John Smith',
+      boundary_min:   'A',
+      boundary_max:   ('John ').repeat(Math.max(1, Math.floor(clamp(250) / 5))).trim(),
+      invalid:        '12345!@#$%',
+    },
+    address: {
+      valid:          '123 Main Street, Apt 4B',
+      boundary_min:   'A',
+      boundary_max:   ('123 Main St ').repeat(Math.max(1, Math.floor(clamp(240) / 12))).trim(),
+      invalid:        '!@#$%^&*()',
+    },
+    zip: {
+      valid:          '10001',
+      boundary_min:   '1',
+      boundary_max:   '1'.repeat(clamp(10)),
+      invalid:        'ABCDE',
+    },
+    message: {
+      valid:          'This is a test message sent for validation purposes. Please ignore.',
+      boundary_min:   'A',
+      boundary_max:   ('Test message. ').repeat(Math.max(1, Math.floor(clamp(900) / 14))).trim(),
+      invalid:        ' ',
+    },
+    search: {
+      valid:          'test search query',
+      boundary_min:   'a',
+      boundary_max:   'search '.repeat(Math.max(1, Math.floor(clamp(200) / 7))).trim(),
+      invalid:        '<>',
+    },
+    text: {
+      valid:          'TestValue',
+      boundary_min:   'A',
+      boundary_max:   'T'.repeat(clamp(250)),
+      invalid:        ' ',
+    },
+  };
+  return defs[fieldType] || defs.text;
+}
+
+function buildSmartScenarios(dom) {
+  const SCENARIO_DEFS = [
+    { name: 'Valid Submission',       type: 'valid',          valueKey: 'valid',        desc: 'Fill all fields with correct realistic data and submit' },
+    { name: 'Empty Required Fields',  type: 'boundary_empty', valueKey: null,           desc: 'Leave all fields empty and attempt to submit' },
+    { name: 'Minimum Boundary',       type: 'boundary_min',   valueKey: 'boundary_min', desc: 'Fill fields with minimum-length / smallest valid values' },
+    { name: 'Maximum Boundary',       type: 'boundary_max',   valueKey: 'boundary_max', desc: 'Fill fields with maximum-length values near limits' },
+    { name: 'Invalid Format Data',    type: 'invalid',        valueKey: 'invalid',      desc: 'Fill fields with wrong-format data to trigger validation' },
+  ];
+
+  const submitBtn = dom.buttons.find(b =>
+    b.type === 'submit' ||
+    /submit|login|sign.?in|register|send|continue|save|create|search|next|go|ok|confirm/i.test(b.text)
+  ) || dom.buttons[dom.buttons.length - 1];
+
+  return SCENARIO_DEFS.map(def => {
+    const actions = [];
+
+    for (const input of dom.inputs) {
+      if (input.type === 'checkbox') {
+        actions.push({ type: 'highlight_check', selector: input.selector, check: def.valueKey !== null, description: `${def.valueKey !== null ? 'Check' : 'Uncheck'} "${input.label || 'checkbox'}"` });
+        continue;
+      }
+      if (input.type === 'radio') continue; // radios handled by click
+
+      if (def.valueKey === null) {
+        // Empty scenario: focus and highlight but don't fill
+        actions.push({ type: 'highlight_only', selector: input.selector, description: `Focus "${input.label || input.placeholder || input.type}" (leave empty)` });
+      } else {
+        const fieldType = detectFieldType(input);
+        const values    = getTestValues(fieldType, input.maxLength);
+        const value     = values[def.valueKey] || values.valid;
+        const shortVal  = value.length > 35 ? value.slice(0, 32) + '…' : value;
+        actions.push({ type: 'highlight_fill', selector: input.selector, value, description: `"${input.label || input.placeholder || fieldType}" → "${shortVal}"` });
+      }
+    }
+
+    for (const sel of dom.selects) {
+      if (def.valueKey === null) {
+        actions.push({ type: 'highlight_only', selector: sel.selector, description: `Focus "${sel.label || 'select'}" (leave default)` });
+      } else {
+        const optIdx = def.type === 'boundary_max' || def.type === 'invalid' ? (sel.options.length - 1) : 0;
+        const opt    = sel.options[optIdx];
+        if (opt) actions.push({ type: 'highlight_select', selector: sel.selector, value: opt.value, description: `Select "${sel.label || 'dropdown'}" → "${opt.text || opt.value}"` });
+      }
+    }
+
+    for (const ta of dom.textareas) {
+      if (def.valueKey === null) {
+        actions.push({ type: 'highlight_only', selector: ta.selector, description: `Focus "${ta.label || 'textarea'}" (leave empty)` });
+      } else {
+        const values = getTestValues('message', null);
+        const value  = values[def.valueKey] || values.valid;
+        const shortVal = value.length > 35 ? value.slice(0, 32) + '…' : value;
+        actions.push({ type: 'highlight_fill', selector: ta.selector, value, description: `Textarea "${ta.label || 'message'}" → "${shortVal}"` });
+      }
+    }
+
+    if (submitBtn) {
+      actions.push({ type: 'highlight_click', selector: submitBtn.selector, color: '#34d399', description: `Click "${submitBtn.text}"` });
+    }
+
+    actions.push({ type: 'check_result', description: 'Read page response' });
+
+    return { name: def.name, type: def.type, description: def.desc, actions };
+  });
+}
+
+async function hlEl(page, selector, color = '#818cf8') {
+  await page.evaluate(({ sel, col }) => {
+    let el;
+    try {
+      el = sel.startsWith('/') || sel.startsWith('(')
+        ? document.evaluate(sel, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue
+        : document.querySelector(sel);
+    } catch (_) { return; }
+    if (!el) return;
+    el.dataset.stPrevOutline    = el.style.outline    || '';
+    el.dataset.stPrevShadow     = el.style.boxShadow  || '';
+    el.dataset.stPrevTransition = el.style.transition || '';
+    el.style.transition  = 'outline 0.15s, box-shadow 0.15s';
+    el.style.outline     = `3px solid ${col}`;
+    el.style.boxShadow   = `0 0 0 5px ${col}33, 0 0 20px ${col}66`;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, { sel: selector, col: color }).catch(() => {});
+}
+
+async function unhlEl(page, selector) {
+  await page.evaluate((sel) => {
+    let el;
+    try {
+      el = sel.startsWith('/') || sel.startsWith('(')
+        ? document.evaluate(sel, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue
+        : document.querySelector(sel);
+    } catch (_) { return; }
+    if (!el) return;
+    el.style.outline    = el.dataset.stPrevOutline    || '';
+    el.style.boxShadow  = el.dataset.stPrevShadow     || '';
+    el.style.transition = el.dataset.stPrevTransition || '';
+  }, selector).catch(() => {});
+}
+
+async function executeSmartAction(page, action, send) {
+  const T = 8000;
+  send('LOG', { level: 'info', message: `    ↳ ${action.description}` });
+
+  switch (action.type) {
+    case 'highlight_only': {
+      if (!action.selector) break;
+      await hlEl(page, action.selector, '#64748b');
+      await page.waitForTimeout(550);
+      await unhlEl(page, action.selector);
+      break;
+    }
+    case 'highlight_fill': {
+      if (!action.selector) break;
+      const loc = makeLocator(page, action.selector);
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await hlEl(page, action.selector, '#818cf8');
+      await page.waitForTimeout(350);
+      await loc.focus({ timeout: 4000 }).catch(() => {});
+      await page.waitForTimeout(200);
+      // Clear first then fill so old content is replaced
+      await loc.fill('', { timeout: T }).catch(() => {});
+      await loc.fill(action.value || '', { timeout: T });
+      await page.waitForTimeout(250);
+      await unhlEl(page, action.selector);
+      break;
+    }
+    case 'highlight_select': {
+      if (!action.selector) break;
+      const loc = makeLocator(page, action.selector);
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await hlEl(page, action.selector, '#f59e0b');
+      await page.waitForTimeout(300);
+      await loc.selectOption(action.value || '', { timeout: T }).catch(async () => {
+        await loc.selectOption({ index: 1 }, { timeout: T }).catch(() => {});
+      });
+      await page.waitForTimeout(250);
+      await unhlEl(page, action.selector);
+      break;
+    }
+    case 'highlight_check': {
+      if (!action.selector) break;
+      const loc = makeLocator(page, action.selector);
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await hlEl(page, action.selector, '#34d399');
+      await page.waitForTimeout(300);
+      if (action.check) {
+        await loc.check({ timeout: T }).catch(() => {});
+      } else {
+        await loc.uncheck({ timeout: T }).catch(() => {});
+      }
+      await page.waitForTimeout(200);
+      await unhlEl(page, action.selector);
+      break;
+    }
+    case 'highlight_click': {
+      if (!action.selector) break;
+      const loc = makeLocator(page, action.selector);
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await hlEl(page, action.selector, action.color || '#818cf8');
+      await page.waitForTimeout(450);
+      await unhlEl(page, action.selector);
+      try { await loc.click({ timeout: T }); }
+      catch { await loc.click({ force: true, timeout: T }); }
+      break;
+    }
+    case 'check_result': {
+      await page.waitForTimeout(1800);
+      const info = await page.evaluate(() => {
+        const text = (s) => { try { const e = document.querySelector(s); return e ? e.textContent.trim().slice(0, 80) : ''; } catch { return ''; } };
+        const has  = (s) => { try { const e = document.querySelector(s); return !!(e && e.offsetParent !== null); } catch { return false; } };
+        const successMsg = text('[class*="success"],[class*="thank"],[role="alert"],[class*="alert"]');
+        const hasSuccess = has('[class*="success"],[class*="thank-you"]');
+        const hasError   = has('[class*="error"],[aria-invalid="true"],[class*="invalid"],[class*="alert-danger"]');
+        return { successMsg, hasSuccess, hasError, url: window.location.href, title: document.title };
+      }).catch(() => ({ hasSuccess: false, hasError: false, url: '', title: '' }));
+
+      if (info.hasSuccess) {
+        send('LOG', { level: 'success', message: `    ✅ Success — page shows confirmation${info.successMsg ? ': "' + info.successMsg + '"' : ''}` });
+      } else if (info.hasError) {
+        send('LOG', { level: 'warn',    message: `    ⚠  Validation errors shown (expected for boundary/invalid tests)` });
+      } else {
+        send('LOG', { level: 'info',    message: `    ℹ  Page responded — no explicit success/error element detected` });
+      }
+      break;
+    }
+    default:
+      await page.waitForTimeout(200);
+  }
+}
+
+app.post('/api/smart-test', async (req, res) => {
+  const { url } = req.body || {};
+  if (!url) { res.status(400).json({ error: 'url is required' }); return; }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const send = (type, payload) => {
+    try { res.write(`data: ${JSON.stringify({ type, payload })}\n\n`); } catch (_) {}
+  };
+
+  let browser   = null;
+  let frameOn   = false;
+  let frameTimer = null;
+
+  const startFrames = (page) => {
+    frameOn = true;
+    const loop = async () => {
+      if (!frameOn) return;
+      try {
+        const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+        send('FRAME', { frameBase64: buf.toString('base64') });
+      } catch (_) {}
+      if (frameOn) frameTimer = setTimeout(loop, 75);
+    };
+    loop();
+  };
+
+  const stopFrames = () => {
+    frameOn = false;
+    if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+  };
+
+  try {
+    send('LOG', { level: 'info', message: '🔬 Smart Tester — no API key required' });
+    send('LOG', { level: 'info', message: `   Target: ${url}` });
+
+    const launchOpts = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOpts.executablePath = CHROMIUM_PATH;
+
+    browser = await chromium.launch(launchOpts);
+    const ctx = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    const page = await ctx.newPage();
+
+    // Auto-dismiss JS dialogs
+    page.on('dialog', async (d) => {
+      send('LOG', { level: 'info', message: `  📋 Auto-dismissed dialog: "${d.message().slice(0, 60)}"` });
+      await d.dismiss().catch(() => {});
+    });
+
+    send('LOG', { level: 'success', message: '✓ Browser launched' });
+    startFrames(page);
+
+    send('LOG', { level: 'info', message: `\n🌐 Navigating to ${url}…` });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
+    send('LOG', { level: 'success', message: `✓ Loaded: "${await page.title()}"` });
+
+    send('LOG', { level: 'info', message: '\n🧹 Dismissing overlays…' });
+    await dismissOverlays(page, send);
+
+    send('LOG', { level: 'info', message: '\n⏳ Waiting for dynamic content…' });
+    await page.waitForLoadState('networkidle', { timeout: 7000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => window.scrollBy(0, 300)).catch(() => {});
+    await page.waitForTimeout(400);
+    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+    await page.waitForTimeout(300);
+
+    send('LOG', { level: 'info', message: '\n🔬 Analyzing form fields…' });
+    const dom = await extractPageDOM(page);
+    send('LOG', { level: 'info', message: `   Found: ${dom.inputs.length} inputs · ${dom.selects.length} selects · ${dom.textareas.length} textareas · ${dom.buttons.length} buttons` });
+    send('DOM_SUMMARY', { inputs: dom.inputs.length, selects: dom.selects.length, textareas: dom.textareas.length, buttons: dom.buttons.length });
+
+    if (dom.inputs.length === 0 && dom.selects.length === 0 && dom.textareas.length === 0) {
+      send('LOG', { level: 'warn', message: '  ⚠ No fillable form fields found on this page' });
+      send('LOG', { level: 'info', message: '  Try a page that has a login, signup, or contact form' });
+      send('COMPLETE', { passed: 0, failed: 0, total: 0 });
+      return;
+    }
+
+    send('LOG', { level: 'info', message: '\n📋 Building test scenarios…' });
+    const scenarios = buildSmartScenarios(dom);
+    send('LOG', { level: 'success', message: `✓ ${scenarios.length} scenarios ready` });
+    send('TEST_PLAN', { tests: scenarios.map((s, i) => ({ index: i, name: s.name, type: s.type, description: s.description, status: 'pending' })) });
+
+    let passed = 0, failed = 0;
+
+    for (let ti = 0; ti < scenarios.length; ti++) {
+      const scenario = scenarios[ti];
+      send('LOG', { level: 'step', message: `\n━━ ${ti + 1}/${scenarios.length}: ${scenario.name} ━━` });
+      send('TEST_STATUS', { index: ti, status: 'running' });
+
+      try {
+        // Reset page between scenarios
+        if (ti > 0) {
+          send('LOG', { level: 'info', message: `  ↺ Resetting page…` });
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.waitForTimeout(1200);
+          await dismissOverlays(page, send);
+          await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+          await page.waitForTimeout(500);
+        }
+
+        for (const action of scenario.actions) {
+          await executeSmartAction(page, action, send);
+        }
+
+        send('LOG', { level: 'success', message: `  ✅ Scenario complete` });
+        send('TEST_STATUS', { index: ti, status: 'passed' });
+        passed++;
+      } catch (err) {
+        const msg = (err.message || String(err)).split('\n')[0].slice(0, 120);
+        send('LOG', { level: 'error', message: `  ❌ Failed: ${msg}` });
+        send('TEST_STATUS', { index: ti, status: 'failed', error: msg });
+        failed++;
+      }
+    }
+
+    stopFrames();
+    send('LOG', { level: passed === scenarios.length ? 'success' : 'warn',
+      message: `\n🏁 Done — ${passed} passed · ${failed} failed · ${scenarios.length} total` });
+    send('COMPLETE', { passed, failed, total: scenarios.length });
+
+  } catch (err) {
+    stopFrames();
+    const msg = (err.message || String(err)).split('\n')[0].slice(0, 200);
+    send('LOG', { level: 'error', message: `\n💥 Error: ${msg}` });
+    send('COMPLETE', { passed: 0, failed: 0, total: 0, error: msg });
+  } finally {
+    stopFrames();
+    if (browser) await browser.close().catch(() => {});
+    res.end();
+  }
+});
+
 // ── Live Browser: SSE streaming + REST events ─────────────────────────────
 // Sessions map: sessionId → { browser, page, active, loopTimer, navigating, sseRes }
 const liveSessions = new Map();
