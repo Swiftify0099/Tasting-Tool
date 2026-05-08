@@ -626,7 +626,7 @@ Exact JSON structure required:
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: 2000,
         temperature: 0.2,
         messages: [
           { role: 'system', content: systemPrompt },
