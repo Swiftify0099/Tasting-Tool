@@ -370,51 +370,51 @@ function getVSCodeAPI(): VSCodeAPI {
 
       // ── RUN_TEST ───────────────────────────────────────────────
       if (message.type === 'RUN_TEST') {
-        const flow          = message.payload as any;
-        const steps: any[]  = flow?.steps ?? [];
-        const safeName      = (flow?.name ?? 'untitled').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        const enabledSteps  = steps.filter((s: any) => s.enabled !== false);
-        const baseUrl       = flow?.baseUrl && flow.baseUrl !== 'https://' ? flow.baseUrl : '';
+        const flow = message.payload as any;
 
-        const logs: Array<{ delay: number; type: string; message: string; step?: any }> = [
-          { delay: 100,  type: 'info',    message: `▶  Running: ${safeName}.spec.ts` },
-          { delay: 350,  type: 'info',    message: `Browser: chromium (headless)` },
-          { delay: 600,  type: 'info',    message: `Launching browser…` },
-          ...enabledSteps.map((s: any, i: number) => {
-            const displayLabel = s.action === 'visit'
-              ? (s.url ?? s.value ?? baseUrl ?? 'page')
-              : (s.label ?? s.action);
-            return {
-              delay: 850 + i * 650,
-              type: 'step',
-              message: `[${i + 1}/${enabledSteps.length}] ${displayLabel} (${s.action})`,
-              step: s,
-            };
-          }),
-          {
-            delay: 850 + enabledSteps.length * 650 + 250,
-            type: 'success',
-            message: `✓  All ${enabledSteps.length} step${enabledSteps.length !== 1 ? 's' : ''} passed`,
-          },
-          {
-            delay: 850 + enabledSteps.length * 650 + 500,
-            type: 'info',
-            message: `${enabledSteps.length} passed (${Math.round(enabledSteps.length * 0.65 + 1.2)}s)`,
-          },
-        ];
+        const dispatchMsg = (type: string, payload: unknown) => {
+          window.postMessage({ type, payload }, '*');
+        };
 
-        logs.forEach(({ delay, type, message, step }) => {
-          setTimeout(() => {
-            window.postMessage({ type: 'TEST_RUN_LOG', payload: { logType: type, message } }, '*');
-            if (type === 'step' && step) {
-              window.postMessage({ type: 'TEST_RUN_STEP', payload: step }, '*');
+        dispatchMsg('TEST_RUN_LOG', { logType: 'info', message: '▶  Connecting to Playwright runner…' });
+
+        fetch('/api/run-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flow }),
+        }).then(async (res) => {
+          if (!res.ok || !res.body) {
+            dispatchMsg('TEST_RUN_LOG', { logType: 'error', message: `Runner returned HTTP ${res.status}` });
+            dispatchMsg('TEST_RUN_COMPLETE', { passed: false });
+            return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const event = JSON.parse(line.slice(6)) as { type: string; payload: unknown };
+                  dispatchMsg(event.type, event.payload);
+                } catch (_) {}
+              }
             }
-          }, delay);
+          }
+        }).catch((err: Error) => {
+          dispatchMsg('TEST_RUN_LOG', {
+            logType: 'error',
+            message: `Cannot reach runner server: ${err.message}. Make sure the runner server is started.`,
+          });
+          dispatchMsg('TEST_RUN_COMPLETE', { passed: false });
         });
-
-        setTimeout(() => {
-          window.postMessage({ type: 'TEST_RUN_COMPLETE', payload: { passed: true } }, '*');
-        }, 850 + enabledSteps.length * 650 + 900);
       }
 
       // ── EXTRACT_DOM ────────────────────────────────────────────
