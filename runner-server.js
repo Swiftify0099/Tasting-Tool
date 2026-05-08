@@ -267,16 +267,45 @@ async function executeStep(page, step, baseUrl) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       break;
     }
-    case 'click':
-      await page.locator(sel).first().click({ timeout });
+    case 'click': {
+      const loc = page.locator(sel).first();
+      await loc.waitFor({ state: 'attached', timeout });
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      try {
+        await loc.click({ timeout });
+      } catch (clickErr) {
+        // Fallback: force-click bypasses overlay/animation interception
+        await loc.click({ force: true, timeout });
+      }
       break;
-    case 'dblclick':
-      await page.locator(sel).first().dblclick({ timeout });
+    }
+    case 'dblclick': {
+      const loc = page.locator(sel).first();
+      await loc.waitFor({ state: 'attached', timeout });
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      try {
+        await loc.dblclick({ timeout });
+      } catch (clickErr) {
+        await loc.dblclick({ force: true, timeout });
+      }
       break;
-    case 'rightclick':
-      await page.locator(sel).first().click({ button: 'right', timeout });
+    }
+    case 'rightclick': {
+      const loc = page.locator(sel).first();
+      await loc.waitFor({ state: 'attached', timeout });
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      try {
+        await loc.click({ button: 'right', timeout });
+      } catch (clickErr) {
+        await loc.click({ button: 'right', force: true, timeout });
+      }
       break;
+    }
     case 'hover':
+      await page.locator(sel).first().scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
       await page.locator(sel).first().hover({ timeout });
       break;
     case 'fill':
