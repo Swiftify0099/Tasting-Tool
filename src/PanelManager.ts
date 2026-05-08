@@ -265,7 +265,7 @@ export class PanelManager {
         browserType: 'chromium',
         headless:    false,
         timeout:     15000,
-        slowMo:      0,
+        slowMo:      500, // 500ms delay to make actions visible in the preview window
       };
 
       const postToWebview = (type: string, payload: unknown) => {
@@ -345,9 +345,13 @@ export class PanelManager {
 
       vscode.window.showInformationMessage(`🔍 Extracting DOM from ${url}…`);
 
-      browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+      browser = await chromium.launch({ 
+        headless: true, 
+        args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] 
+      });
       const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 800 }
       });
       const page = await context.newPage();
 

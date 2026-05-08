@@ -5,7 +5,7 @@ type PostMessageFn = (type: string, payload: unknown) => void;
 
 /** Highlight CSS injected into the page before each targeted action */
 const HIGHLIGHT_STYLE_ID = '__pw_highlight_style__';
-const HIGHLIGHT_CLASS     = '__pw_highlighted__';
+const HIGHLIGHT_CLASS = '__pw_highlighted__';
 
 export class PlaywrightRunner {
   private _post: PostMessageFn;
@@ -40,24 +40,47 @@ export class PlaywrightRunner {
         }
       }
 
-      const browserType  = options?.browserType ?? 'chromium';
-      const headless     = options?.headless     ?? true;
-      const slowMo       = options?.slowMo       ?? 0;
-      const defaultTimeout = options?.timeout    ?? 15000;
-      const launcher     = playwrightModule[browserType] ?? playwrightModule.chromium;
+      const browserType = options?.browserType ?? 'chromium';
+      const headless = options?.headless ?? true;
+      const slowMo = options?.slowMo ?? 0;
+      const defaultTimeout = options?.timeout ?? 15000;
+      const launcher = playwrightModule[browserType] ?? playwrightModule.chromium;
 
       /* ── 2. Launch ─────────────────────────────────────────────── */
-      this._post('TEST_RUN_LOG', { logType: 'info', message: `▶  Launching ${browserType} (headless: ${headless})…` });
+      this._post('TEST_RUN_LOG', { logType: 'info', message: `▶  Launching ${browserType}…` });
 
-      browser = await launcher.launch({
-        headless,
-        slowMo,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      });
+      try {
+        browser = await launcher.launch({
+          headless,
+          slowMo,
+          args: headless
+            ? [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-gpu', // Only disable GPU in headless mode
+            ]
+            : ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        });
+      } catch (launchErr) {
+        const msg = (launchErr as Error).message;
+        this._post('TEST_RUN_LOG', { logType: 'error', message: `✗ Failed to launch ${browserType}: ${msg.slice(0, 200)}` });
+
+        if (!headless) {
+          this._post('TEST_RUN_LOG', { logType: 'info', message: 'ℹ Retrying in headless mode…' });
+          browser = await launcher.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-gpu'],
+          });
+        } else {
+          throw launchErr;
+        }
+      }
 
       const context = await browser.newContext({
         viewport: { width: 1280, height: 720 },
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        deviceScaleFactor: 1, // Ensure consistent screenshots
       });
       const page = await context.newPage();
       page.setDefaultTimeout(defaultTimeout);
@@ -154,11 +177,20 @@ export class PlaywrightRunner {
   /* ── Screenshot helpers ──────────────────────────────────────────── */
   private async _sendScreenshot(page: any, stepIdx: number, action: string, phase: string, color: string): Promise<void> {
     try {
-      const buffer: Buffer = await page.screenshot({ type: 'jpeg', quality: 75, fullPage: false });
+      // Ensure page is still open and responsive
+      if (page.isClosed()) return;
+
+      const buffer: Buffer = await page.screenshot({
+        type: 'jpeg',
+        quality: 60, // Lower quality for faster streaming over postMessage
+        fullPage: false
+      });
       const base64 = buffer.toString('base64');
       this._post('TEST_RUN_SCREENSHOT', { stepIdx, action, phase, color, screenshotBase64: base64 });
-    } catch {
-      /* Screenshot can fail on blank/crashed pages — silently skip */
+    } catch (err) {
+      // Log screenshot errors to terminal for visibility
+      const msg = (err as Error).message;
+      this._post('TEST_RUN_LOG', { logType: 'info', message: `   ⚠ Screenshot skip (${phase}): ${msg.slice(0, 50)}…` });
     }
   }
 
@@ -197,15 +229,20 @@ export class PlaywrightRunner {
 
   /* ── Step executor ───────────────────────────────────────────────── */
   private async _executeStep(page: any, step: TestStep, baseUrl: string, defaultTimeout: number): Promise<void> {
-    const sel     = step.selector     ? step.selector     : undefined;
-    const timeout = step.timeout      ?? defaultTimeout;
+    const sel = step.selector ? step.selector : undefined;
+    const timeout = step.timeout ?? defaultTimeout;
 
     switch (step.action) {
 
       /* Navigation */
-      case 'visit':
-        await page.goto(step.url ?? step.value ?? baseUrl, { waitUntil: 'domcontentloaded', timeout });
+      case 'visit': {
+        let targetUrl = step.url ?? step.value ?? baseUrl;
+        if (!targetUrl || targetUrl === 'https://' || targetUrl === 'http://') {
+          throw new Error('No valid URL provided for navigation. Please enter a URL in the Visit step.');
+        }
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout });
         break;
+      }
 
       case 'reload':
         await page.reload({ waitUntil: 'domcontentloaded', timeout });
@@ -261,8 +298,8 @@ export class PlaywrightRunner {
           const y = step.scrollY ?? 500;
           await page.evaluate(
             (args: { dx: number; dy: number }) => {
-               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-               (globalThis as any).window.scrollBy({ left: args.dx, top: args.dy, behavior: 'smooth' });
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (globalThis as any).window.scrollBy({ left: args.dx, top: args.dy, behavior: 'smooth' });
             },
             { dx: x, dy: y }
           );
@@ -321,7 +358,7 @@ export class PlaywrightRunner {
       /* Wait */
       case 'wait': {
         const val = step.value ?? '';
-        const ms  = parseInt(val);
+        const ms = parseInt(val);
         if (!isNaN(ms) && ms > 0) {
           await page.waitForTimeout(ms);
         } else if (val && (val.startsWith('#') || val.startsWith('.') || val.startsWith('[') || val.startsWith('//'))) {
@@ -334,7 +371,7 @@ export class PlaywrightRunner {
 
       /* Assertion — best-effort in live preview mode */
       case 'assert': {
-        const aSel     = step.assertSelector || sel;
+        const aSel = step.assertSelector || sel;
         const expected = step.assertExpected ?? '';
         switch (step.assertType ?? 'visibility') {
           case 'url':
@@ -344,15 +381,17 @@ export class PlaywrightRunner {
             if (aSel) { await page.waitForSelector(aSel, { state: expected === 'hidden' ? 'hidden' : 'visible', timeout }); }
             break;
           case 'text':
-            if (aSel) { await page.waitForFunction(
-              (args: { s: string; t: string }) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const doc = (globalThis as any).document;
-                const el = doc.querySelector(args.s);
-                return el ? (el.textContent || '').includes(args.t) : false;
-              },
-              { s: aSel, t: expected }, { timeout }
-            ); }
+            if (aSel) {
+              await page.waitForFunction(
+                (args: { s: string; t: string }) => {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const doc = (globalThis as any).document;
+                  const el = doc.querySelector(args.s);
+                  return el ? (el.textContent || '').includes(args.t) : false;
+                },
+                { s: aSel, t: expected }, { timeout }
+              );
+            }
             break;
           default:
             break;
@@ -375,7 +414,7 @@ export class PlaywrightRunner {
       /* Viewport */
       case 'setviewport':
         await page.setViewportSize({
-          width:  step.viewportWidth  ?? 1280,
+          width: step.viewportWidth ?? 1280,
           height: step.viewportHeight ?? 720,
         });
         break;
@@ -383,18 +422,18 @@ export class PlaywrightRunner {
       /* Network mock */
       case 'mockresponse':
         await page.route(step.mockUrl ?? '**/*', (route: any) => route.fulfill({
-          status:      step.mockStatus ?? 200,
+          status: step.mockStatus ?? 200,
           contentType: 'application/json',
-          body:        step.mockBody ?? '{}',
+          body: step.mockBody ?? '{}',
         }));
         break;
 
       /* Cookie / storage */
       case 'cookie':
         await page.context().addCookies([{
-          name:  step.cookieName  ?? 'session',
+          name: step.cookieName ?? 'session',
           value: step.cookieValue ?? '',
-          url:   baseUrl,
+          url: baseUrl,
         }]);
         break;
 
@@ -423,17 +462,17 @@ const INTERACTIVE_ACTIONS: string[] = [
 ];
 
 const ACTION_COLOR: Record<string, string> = {
-  visit:      '#38bdf8',
-  click:      '#818cf8', dblclick: '#818cf8', rightclick: '#818cf8',
-  fill:       '#a78bfa', type: '#a78bfa',
-  assert:     '#34d399', check: '#34d399',   uncheck: '#34d399',
-  hover:      '#22d3ee',
-  wait:       '#fbbf24',
+  visit: '#38bdf8',
+  click: '#818cf8', dblclick: '#818cf8', rightclick: '#818cf8',
+  fill: '#a78bfa', type: '#a78bfa',
+  assert: '#34d399', check: '#34d399', uncheck: '#34d399',
+  hover: '#22d3ee',
+  wait: '#fbbf24',
   screenshot: '#fb7185',
-  scroll:     '#fb923c',
-  press:      '#e879f9',
-  reload:     '#38bdf8',
-  goback:     '#94a3b8', goforward: '#94a3b8',
-  drag:       '#f472b6',
-  evaluate:   '#facc15',
+  scroll: '#fb923c',
+  press: '#e879f9',
+  reload: '#38bdf8',
+  goback: '#94a3b8', goforward: '#94a3b8',
+  drag: '#f472b6',
+  evaluate: '#facc15',
 };
