@@ -52,7 +52,7 @@
     "watch:ui": "cd webview-ui && npm run dev",
     "lint": "eslint src --ext ts",
     "pretest": "npm run build",
-    "test": "node ./dist/test/runTest.js",
+    "test": "node ./test-smoke.js",
     "install:all": "npm install && cd webview-ui && npm install"
   },
   "devDependencies": {
