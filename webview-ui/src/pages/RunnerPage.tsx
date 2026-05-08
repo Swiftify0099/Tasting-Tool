@@ -40,152 +40,207 @@ function normalizeUrl(raw: string): string {
   return 'https://' + raw;
 }
 
-// Removed dummy animations since we have live Playwright screenshots now.
-
-/* ── ActionVisualizer — main preview component ─────────────────── */
-function ActionVisualizer({ url, running, status, activeAction, activeLabel,
-  stepIdx, totalSteps, steps, activeStepIdx, screenshotData, canvasRef, hasLiveFrame }: {
-  url: string; running: boolean; status: string;
+/* ── ScriptActionPreview — live animated visualization of what the script is doing ── */
+function ScriptActionPreview({ running, status, activeAction, activeLabel, activeValue,
+  stepIdx, totalSteps, steps, activeStepIdx, canvasRef }: {
+  running: boolean; status: string;
   activeAction: string; activeLabel: string; activeValue?: string;
   stepIdx: number|null; totalSteps: number;
   steps: TestStep[]; activeStepIdx: number|null;
-  screenshotData: string|null;
   canvasRef: React.RefObject<HTMLCanvasElement>;
-  hasLiveFrame: boolean;
 }) {
   const color   = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
-  const enabled  = steps.filter(s => s.enabled !== false);
+  const enabled = steps.filter(s => s.enabled !== false);
+  const currentNum = stepIdx !== null ? stepIdx + 1 : 0;
+  const pct = totalSteps > 0 ? (currentNum / totalSteps) * 100 : 0;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#0b0f18] relative">
+    <div className="flex flex-col h-full bg-[#0b0f18]">
+      {/* Hidden canvas — stays mounted so frame draws always work */}
+      <canvas ref={canvasRef} width={1280} height={720} className="hidden" />
 
-      {/* ── Action hero area ── */}
-      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden relative">
+      {/* ── Main visualization ── */}
+      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden relative px-6 py-6">
+        {/* Dot-grid background */}
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'radial-gradient(circle, #94a3b8 1px, transparent 1px)', backgroundSize: '22px 22px' }} />
 
-        {/* Live canvas — always in DOM so drawImage can target it at any time */}
-        <canvas
-          ref={canvasRef}
-          width={1280}
-          height={720}
-          className={`absolute inset-0 w-full h-full transition-opacity duration-150 ${hasLiveFrame ? 'opacity-100' : 'opacity-0'}`}
-          style={{ objectFit: 'contain', display: 'block', zIndex: hasLiveFrame ? 5 : 0 }}
-        />
+        {/* ─── RUNNING ─── */}
+        {running && (
+          <div className="relative z-10 flex flex-col items-center gap-5 text-center w-full max-w-xs">
 
-        {/* Content shown when we have any visual (live frame or final screenshot) */}
-        {(hasLiveFrame || screenshotData) ? (
-          <div className="absolute inset-0 bg-slate-900 flex items-center justify-center overflow-hidden">
-            {/* Final screenshot fallback — visible only before first live frame */}
-            {!hasLiveFrame && screenshotData && (
-              <img
-                src={`data:image/jpeg;base64,${screenshotData}`}
-                className="absolute inset-0 w-full h-full object-contain"
-                alt="Last Playwright State"
-              />
-            )}
+            {/* Progress bar */}
+            <div className="w-full h-0.5 bg-slate-800 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-700 ease-out"
+                style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
+            </div>
 
-            {/* Action Overlay */}
-            {running && activeAction && (
-              <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none" style={{ zIndex: 20 }}>
-                <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-md"
-                  style={{ borderColor: color+'50', background: color+'18' }}>
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: color+'30' }}>
-                    {(() => { const Icon = ACTION_ICON[activeAction] ?? ACTION_ICON.default; return <Icon className="w-4 h-4" style={{ color }} />; })()}
-                  </div>
-                  <div className="flex-1 min-w-0 pr-4">
-                    <div className="text-xs font-bold text-white uppercase tracking-wider shadow-sm">{actText}</div>
-                    <div className="text-[10px] text-slate-300 truncate max-w-[200px]">{activeLabel}</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <div className="w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_currentColor]" style={{ background: color, color }} />
-                    <span className="text-[10px] font-bold tracking-wider" style={{ color }}>LIVE</span>
-                  </div>
-                </div>
+            {/* Step counter */}
+            <p className="text-[10px] font-mono tracking-widest text-slate-600 -mb-1">
+              STEP {currentNum} / {totalSteps}
+            </p>
+
+            {/* Animated icon ring */}
+            <div className="relative flex items-center justify-center">
+              <div className="absolute w-36 h-36 rounded-full animate-ping opacity-10"
+                style={{ background: color }} />
+              <div className="absolute w-28 h-28 rounded-full opacity-20 animate-pulse"
+                style={{ background: color }} />
+              <div className="relative w-24 h-24 rounded-full flex items-center justify-center shadow-2xl"
+                style={{
+                  background: `${color}14`,
+                  border: `2px solid ${color}50`,
+                  boxShadow: `0 0 48px ${color}25, 0 0 80px ${color}10`,
+                }}>
+                {(() => {
+                  const Icon = ACTION_ICON[activeAction] ?? ACTION_ICON.default;
+                  return <Icon className="w-10 h-10" style={{ color }} />;
+                })()}
               </div>
-            )}
+            </div>
 
-            {/* Completion Overlays */}
-            {!running && status === 'passed' && (
-              <div className="absolute inset-0 bg-emerald-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in" style={{ zIndex: 20 }}>
-                <div className="flex items-center gap-3 bg-emerald-950/80 border border-emerald-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
-                  <CheckCircle className="w-8 h-8 text-emerald-400" />
-                  <div>
-                    <div className="font-bold text-emerald-400 text-lg tracking-wide">All Tests Passed!</div>
-                    <div className="text-xs text-emerald-200/70">{totalSteps} steps completed successfully</div>
-                  </div>
+            {/* Action description */}
+            <div className="space-y-1.5">
+              <p className="text-2xl font-bold text-white tracking-wide">{actText}</p>
+              {activeLabel && (
+                <p className="text-sm text-slate-400 leading-snug max-w-[240px] break-words" title={activeLabel}>
+                  {activeLabel.length > 60 ? activeLabel.slice(0, 57) + '…' : activeLabel}
+                </p>
+              )}
+              {activeValue && (
+                <div className="inline-block mt-1 px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-slate-300 max-w-[240px] truncate" title={activeValue}>
+                  "{activeValue}"
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {!running && status === 'failed' && (
-              <div className="absolute inset-0 bg-red-900/20 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in" style={{ zIndex: 20 }}>
-                <div className="flex items-center gap-3 bg-red-950/80 border border-red-500/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md">
-                  <XCircle className="w-8 h-8 text-red-400" />
-                  <div>
-                    <div className="font-bold text-red-400 text-lg tracking-wide">Test Failed</div>
-                    <div className="text-xs text-red-200/70">Check terminal log for details</div>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Live badge */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border"
+              style={{ borderColor: `${color}40`, background: `${color}10` }}>
+              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: color }} />
+              <span className="text-[10px] font-bold tracking-widest uppercase" style={{ color }}>Executing</span>
+            </div>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-5 px-6 py-4" style={{ zIndex: 1 }}>
-            {/* Idle */}
-            {!running && status === 'idle' && (
-              <div className="flex flex-col items-center gap-3 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                  <Play className="w-7 h-7 text-indigo-400" />
-                </div>
-                <p className="text-sm font-semibold text-white">Preview Ready</p>
-                <p className="text-xs text-slate-500">Click <strong>Generate &amp; Run</strong> to see live execution</p>
-              </div>
-            )}
+        )}
 
-            {/* Passed */}
-            {!running && status === 'passed' && (
-              <div className="flex flex-col items-center gap-3 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                  <CheckCircle className="w-8 h-8 text-emerald-400" />
-                </div>
-                <p className="text-sm font-bold text-emerald-400">All Tests Passed!</p>
-                <p className="text-xs text-slate-500">{totalSteps} step{totalSteps!==1?'s':''} completed successfully</p>
+        {/* ─── IDLE ─── */}
+        {!running && status === 'idle' && (
+          <div className="z-10 w-full max-w-sm">
+            <div className="text-center mb-5">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto mb-3">
+                <Play className="w-5 h-5 text-indigo-400" />
               </div>
-            )}
+              <p className="text-sm font-semibold text-white">Ready to Run</p>
+              <p className="text-xs text-slate-600 mt-1">
+                {enabled.length} step{enabled.length !== 1 ? 's' : ''} queued
+              </p>
+            </div>
 
-            {/* Failed */}
-            {!running && status === 'failed' && (
-              <div className="flex flex-col items-center gap-3 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center">
-                  <XCircle className="w-8 h-8 text-red-400" />
-                </div>
-                <p className="text-sm font-bold text-red-400">Test Failed</p>
-                <p className="text-xs text-slate-500">Check terminal log for details</p>
+            {/* Step pipeline preview */}
+            <div className="space-y-1 max-h-60 overflow-y-auto">
+              {enabled.slice(0, 10).map((step, i) => {
+                const c = ACTION_COLOR[step.action] ?? ACTION_COLOR.default;
+                const Icon = ACTION_ICON[step.action] ?? ACTION_ICON.default;
+                return (
+                  <div key={step.id}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-800/80 hover:border-slate-700 transition-colors">
+                    <span className="text-[9px] font-mono text-slate-700 w-4 text-right flex-shrink-0">{i + 1}</span>
+                    <div className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+                      style={{ background: `${c}20` }}>
+                      <Icon className="w-3 h-3" style={{ color: c }} />
+                    </div>
+                    <span className="text-[11px] text-slate-400 truncate flex-1">{step.label}</span>
+                    <span className="text-[9px] font-mono flex-shrink-0 px-1 py-0.5 rounded"
+                      style={{ background: `${c}15`, color: c }}>{step.action}</span>
+                  </div>
+                );
+              })}
+              {enabled.length > 10 && (
+                <p className="text-center text-[10px] text-slate-700 py-1">+{enabled.length - 10} more steps</p>
+              )}
+              {enabled.length === 0 && (
+                <p className="text-center text-[11px] text-slate-600 py-6">No steps — add steps in Builder first</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ─── PASSED ─── */}
+        {!running && status === 'passed' && (
+          <div className="z-10 flex flex-col items-center gap-5 text-center">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-emerald-400/20 animate-ping" />
+              <div className="relative w-24 h-24 rounded-full bg-emerald-500/15 border-2 border-emerald-500/40 flex items-center justify-center"
+                style={{ boxShadow: '0 0 48px #34d39925' }}>
+                <CheckCircle className="w-10 h-10 text-emerald-400" />
               </div>
-            )}
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-emerald-400">All Passed!</p>
+              <p className="text-sm text-slate-500 mt-1">{totalSteps} step{totalSteps !== 1 ? 's' : ''} completed</p>
+            </div>
+            {/* Compact step badges */}
+            <div className="flex flex-wrap gap-1.5 justify-center max-w-[280px]">
+              {enabled.map((step) => {
+                const c = ACTION_COLOR[step.action] ?? ACTION_COLOR.default;
+                return (
+                  <span key={step.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono"
+                    style={{ background: `${c}15`, color: c, border: `1px solid ${c}30` }}>
+                    ✓ {step.action}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ─── FAILED ─── */}
+        {!running && status === 'failed' && (
+          <div className="z-10 flex flex-col items-center gap-5 text-center">
+            <div className="w-24 h-24 rounded-full bg-red-500/15 border-2 border-red-500/40 flex items-center justify-center"
+              style={{ boxShadow: '0 0 48px #f8717125' }}>
+              <XCircle className="w-10 h-10 text-red-400" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-red-400">Test Failed</p>
+              <p className="text-sm text-slate-500 mt-1">Check the terminal log for details</p>
+            </div>
           </div>
         )}
       </div>
 
       {/* ── Step timeline ── */}
-      <div className="border-t border-slate-800 bg-surface-950/60 overflow-y-auto flex-shrink-0" style={{ maxHeight:'160px' }}>
+      <div className="border-t border-slate-800 overflow-y-auto flex-shrink-0" style={{ maxHeight: '152px' }}>
         <div className="px-2 py-1.5 space-y-0.5">
           {enabled.map((step, i) => {
             const done   = activeStepIdx !== null && i < activeStepIdx;
             const active = i === activeStepIdx;
             const c = ACTION_COLOR[step.action] ?? ACTION_COLOR.default;
+            const Icon = ACTION_ICON[step.action] ?? ACTION_ICON.default;
             return (
-              <div key={step.id} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all duration-300 ${
-                active ? 'border' : 'border border-transparent'}`}
-                style={active ? { background: c+'12', borderColor: c+'40' } : {}}>
-                <span className="flex-shrink-0 w-4 text-center">
-                  {done ? <span className="text-emerald-400">✓</span>
-                    : active ? <RefreshCw className="w-3 h-3 animate-spin inline" style={{ color: c }} />
-                    : <span className="text-slate-700">○</span>}
+              <div key={step.id}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-300 ${active ? 'border' : 'border border-transparent'}`}
+                style={active ? { background: `${c}12`, borderColor: `${c}40` } : {}}>
+                <span className="flex-shrink-0 w-4 text-center text-xs">
+                  {done
+                    ? <span className="text-emerald-400">✓</span>
+                    : active
+                      ? <RefreshCw className="w-3 h-3 animate-spin inline" style={{ color: c }} />
+                      : <span className="text-slate-700">○</span>}
                 </span>
-                <span className={`font-mono text-[10px] flex-shrink-0 w-5 text-right ${active ? 'text-white' : 'text-slate-600'}`}>{i+1}</span>
-                <span className={`flex-1 truncate ${done ? 'text-slate-500' : active ? 'text-white font-medium' : 'text-slate-600'}`}>{step.label}</span>
-                <span className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono" style={active ? { background: c+'25', color: c } : { color:'#334155' }}>{step.action}</span>
+                <span className={`font-mono text-[10px] w-5 text-right flex-shrink-0 ${active ? 'text-white' : 'text-slate-700'}`}>{i + 1}</span>
+                <div className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                  style={active || done ? { background: `${c}20` } : {}}>
+                  <Icon className="w-2.5 h-2.5" style={{ color: active || done ? c : '#334155' }} />
+                </div>
+                <span className={`flex-1 truncate text-[11px] ${done ? 'text-slate-600' : active ? 'text-white font-medium' : 'text-slate-600'}`}>
+                  {step.label}
+                </span>
+                <span className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono"
+                  style={active ? { background: `${c}25`, color: c } : { color: '#334155' }}>
+                  {step.action}
+                </span>
               </div>
             );
           })}
@@ -470,27 +525,28 @@ export default function RunnerPage() {
           )}
         </div>
 
-        {/* Action Visualizer */}
+        {/* Script Action Preview */}
         {showPreview && (
           <div className="flex-1 flex flex-col overflow-hidden min-w-0 border-l border-slate-800">
-            {/* Mini browser chrome header */}
+            {/* Panel header */}
             <div className="flex items-center gap-2 px-3 py-2 bg-[#1a1f2e] border-b border-slate-800 flex-shrink-0">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-400/60" />
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-400/60" />
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400/60" />
-              </div>
-              <div className="flex-1 flex items-center gap-1.5 bg-[#0d1117] border border-slate-700 rounded-full px-2.5 py-0.5 mx-2 min-w-0">
-                {displayUrl.startsWith('https') ? <Lock className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" /> : <Globe className="w-2.5 h-2.5 text-slate-500 flex-shrink-0" />}
-                <span className="text-[10px] font-mono text-slate-400 truncate">{displayUrl || 'No URL — add a Visit step'}</span>
-                {running && <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin flex-shrink-0 ml-auto" />}
-              </div>
-              <span className="text-[10px] text-slate-600 capitalize flex-shrink-0">{state.generatorOptions.browserType}</span>
+              <Zap className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-[11px] font-semibold text-slate-300 tracking-wide">Script Action Preview</span>
+              {running && (
+                <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-amber-400">
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  Running
+                </span>
+              )}
+              {!running && status === 'passed' && (
+                <span className="ml-auto text-[10px] font-mono text-emerald-400">● Passed</span>
+              )}
+              {!running && status === 'failed' && (
+                <span className="ml-auto text-[10px] font-mono text-red-400">● Failed</span>
+              )}
             </div>
-            {/* Visualizer */}
             <div className="flex-1 overflow-hidden">
-              <ActionVisualizer
-                url={displayUrl}
+              <ScriptActionPreview
                 running={running}
                 status={status}
                 activeAction={activeAction}
@@ -500,9 +556,7 @@ export default function RunnerPage() {
                 totalSteps={enabledSteps.length}
                 steps={currentFlow.steps}
                 activeStepIdx={activeStepIdx}
-                screenshotData={screenshotData}
                 canvasRef={canvasRef}
-                hasLiveFrame={hasLiveFrame}
               />
             </div>
           </div>
