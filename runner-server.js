@@ -608,32 +608,88 @@ Exact JSON structure required:
   ]
 }`;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: `Page DOM:\n${domSummary}` }],
-    }),
-  });
+  // Detect provider from model name or key prefix
+  const isOpenRouter = model.includes('/') || apiKey.startsWith('sk-or-');
+  const isAnthropic  = !isOpenRouter && (apiKey.startsWith('sk-ant-') || model.startsWith('claude-'));
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Claude API error ${response.status}: ${errText.slice(0, 300)}`);
+  let raw = '';
+
+  if (isOpenRouter) {
+    // ── OpenRouter (OpenAI-compatible) ──────────────────────
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://playwright-test-builder.replit.app',
+        'X-Title': 'Playwright Test Builder',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: `Page DOM:\n${domSummary}` },
+        ],
+      }),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`OpenRouter API error ${response.status}: ${errText.slice(0, 300)}`);
+    }
+    const data = await response.json();
+    raw = (data.choices?.[0]?.message?.content ?? '').trim();
+
+  } else if (isAnthropic) {
+    // ── Anthropic direct ────────────────────────────────────
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: `Page DOM:\n${domSummary}` }],
+      }),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Anthropic API error ${response.status}: ${errText.slice(0, 300)}`);
+    }
+    const data = await response.json();
+    raw = (data.content?.[0]?.text ?? '').trim();
+
+  } else {
+    throw new Error('Cannot detect API provider. Use an OpenRouter key (sk-or-…) or Anthropic key (sk-ant-…), or pick a model like "anthropic/claude-sonnet-4-5".');
   }
-  const data = await response.json();
-  const raw = (data.content?.[0]?.text ?? '').trim();
+
+  // Strip markdown fences if present
+  raw = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+
   try { return JSON.parse(raw); } catch {
     const m = raw.match(/\{[\s\S]*\}/);
-    if (m) return JSON.parse(m[0]);
-    throw new Error('Claude returned invalid JSON');
+    if (m) { try { return JSON.parse(m[0]); } catch {} }
+    throw new Error('AI returned invalid JSON — try again');
   }
+}
+
+function makeLocator(page, selector) {
+  if (!selector) return null;
+  const s = selector.trim();
+  // XPath selectors start with / or // — Playwright needs xpath= prefix
+  if (s.startsWith('/') || s.startsWith('(')) {
+    return page.locator(`xpath=${s}`).first();
+  }
+  // Text selectors
+  if (s.startsWith('text=') || s.startsWith('has-text=')) {
+    return page.locator(s).first();
+  }
+  return page.locator(s).first();
 }
 
 async function executeAIAction(page, action, send) {
@@ -644,7 +700,7 @@ async function executeAIAction(page, action, send) {
   switch (action.type) {
     case 'focus': {
       if (!action.selector) break;
-      const loc = page.locator(action.selector).first();
+      const loc = makeLocator(page, action.selector);
       await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
       await loc.focus({ timeout: 4000 }).catch(() => {});
       await page.waitForTimeout(350);
@@ -652,7 +708,7 @@ async function executeAIAction(page, action, send) {
     }
     case 'fill': {
       if (!action.selector) break;
-      const loc = page.locator(action.selector).first();
+      const loc = makeLocator(page, action.selector);
       await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
       await loc.focus({ timeout: 4000 }).catch(() => {});
       await page.waitForTimeout(250);
@@ -662,7 +718,7 @@ async function executeAIAction(page, action, send) {
     }
     case 'click': {
       if (!action.selector) break;
-      const loc = page.locator(action.selector).first();
+      const loc = makeLocator(page, action.selector);
       await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(250);
       try { await loc.click({ timeout }); }
@@ -671,7 +727,7 @@ async function executeAIAction(page, action, send) {
     }
     case 'select': {
       if (!action.selector) break;
-      const loc = page.locator(action.selector).first();
+      const loc = makeLocator(page, action.selector);
       await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
       await loc.selectOption(action.value || '', { timeout }).catch(async () => {
         await loc.selectOption({ index: 1 }, { timeout }).catch(() => {});
@@ -764,6 +820,16 @@ app.post('/api/ai-live-test', async (req, res) => {
 
     send('LOG', { level: 'info', message: '\n🔍 Checking for overlays/popups…' });
     await dismissOverlays(page, send);
+
+    // Extra wait for JS-heavy pages (React, Vue, Angular)
+    send('LOG', { level: 'info', message: '\n⏳ Waiting for dynamic content…' });
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    // Scroll down slightly to trigger lazy-rendered elements, then back up
+    await page.evaluate(() => window.scrollBy(0, 300)).catch(() => {});
+    await page.waitForTimeout(500);
+    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+    await page.waitForTimeout(300);
 
     send('LOG', { level: 'info', message: '\n🔬 Analyzing page structure…' });
     const dom = await extractPageDOM(page);

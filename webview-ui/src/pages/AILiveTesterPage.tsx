@@ -6,9 +6,14 @@ import {
 } from 'lucide-react';
 
 const MODELS = [
-  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (Latest)' },
-  { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-  { id: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
+  { id: 'anthropic/claude-sonnet-4-5',        label: '🔀 Claude Sonnet 4.5 (OpenRouter)',  provider: 'openrouter' },
+  { id: 'anthropic/claude-3-5-sonnet-20241022',label: '🔀 Claude 3.5 Sonnet (OpenRouter)', provider: 'openrouter' },
+  { id: 'anthropic/claude-3-haiku',            label: '🔀 Claude 3 Haiku (OpenRouter)',     provider: 'openrouter' },
+  { id: 'openai/gpt-4o',                       label: '🔀 GPT-4o (OpenRouter)',             provider: 'openrouter' },
+  { id: 'openai/gpt-4o-mini',                  label: '🔀 GPT-4o Mini (OpenRouter)',        provider: 'openrouter' },
+  { id: 'google/gemini-2.0-flash-001',         label: '🔀 Gemini 2.0 Flash (OpenRouter)',   provider: 'openrouter' },
+  { id: 'claude-sonnet-4-5',                   label: '🧠 Claude Sonnet 4.5 (Direct)',      provider: 'anthropic' },
+  { id: 'claude-3-5-sonnet-20241022',          label: '🧠 Claude 3.5 Sonnet (Direct)',      provider: 'anthropic' },
 ];
 
 const TYPE_META: Record<string, { label: string; color: string; bg: string }> = {
@@ -36,7 +41,7 @@ export default function AILiveTesterPage() {
 
   const [url, setUrl]             = useState('');
   const [apiKey, setApiKey]       = useState(() => localStorage.getItem('ai_api_key') ?? '');
-  const [model, setModel]         = useState(MODELS[0].id);
+  const [model, setModel]         = useState(() => localStorage.getItem('ai_tester_model') ?? MODELS[0].id);
   const [showKey, setShowKey]     = useState(false);
   const [showModel, setShowModel] = useState(false);
 
@@ -228,7 +233,7 @@ export default function AILiveTesterPage() {
               {MODELS.map(m => (
                 <button
                   key={m.id}
-                  onClick={() => { setModel(m.id); setShowModel(false); }}
+                  onClick={() => { setModel(m.id); localStorage.setItem('ai_tester_model', m.id); setShowModel(false); }}
                   className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-700 transition-colors ${model === m.id ? 'text-violet-400' : 'text-slate-300'}`}
                 >
                   {m.label}
