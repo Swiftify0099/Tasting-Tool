@@ -2,7 +2,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useFlow } from '../context/FlowContext';
 import Toast from './Toast';
 import {
-  Home, Wrench, Code2, Play, History, Settings, Zap, ChevronRight, Sparkles, Crosshair, Monitor
+  Home, Wrench, Code2, Play, History, Settings, Zap, ChevronRight, Sparkles, Crosshair, Monitor, Brain
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/dom-inspector',icon: Crosshair, label: 'Inspector',   desc: 'Extract DOM elements' },
   { to: '/live',         icon: Monitor,   label: 'Live',        desc: 'Interactive browser' },
   { to: '/ai',           icon: Sparkles,  label: 'AI Gen',      desc: 'Generate with AI' },
+  { to: '/ai-tester',    icon: Brain,     label: 'AI Tester',   desc: 'Claude live AI tester' },
   { to: '/generator',    icon: Code2,     label: 'Generator',   desc: 'Code preview & export' },
   { to: '/runner',       icon: Play,      label: 'Runner',      desc: 'Run & debug tests' },
   { to: '/history',      icon: History,   label: 'History',     desc: 'Saved flows' },

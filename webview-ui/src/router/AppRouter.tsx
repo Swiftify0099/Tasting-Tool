@@ -7,6 +7,7 @@ import HistoryPage from '../pages/HistoryPage';
 import SettingsPage from '../pages/SettingsPage';
 import GeneratorPage from '../pages/GeneratorPage';
 import AIGeneratorPage from '../pages/AIGeneratorPage';
+import AILiveTesterPage from '../pages/AILiveTesterPage';
 import DOMInspectorPage from '../pages/DOMInspectorPage';
 import LiveBrowserPage from '../pages/LiveBrowserPage';
 
@@ -20,6 +21,7 @@ export default function AppRouter() {
         <Route path="/builder/:flowId" element={<BuilderPage />} />
         <Route path="/generator"     element={<GeneratorPage />} />
         <Route path="/ai"            element={<AIGeneratorPage />} />
+        <Route path="/ai-tester"     element={<AILiveTesterPage />} />
         <Route path="/dom-inspector" element={<DOMInspectorPage />} />
         <Route path="/live"          element={<LiveBrowserPage />} />
         <Route path="/runner"        element={<RunnerPage />} />

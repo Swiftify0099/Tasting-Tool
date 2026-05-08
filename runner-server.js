@@ -460,6 +460,370 @@ async function executeStep(page, step, baseUrl) {
   }
 }
 
+// ── AI Live Tester ────────────────────────────────────────────────────────
+
+async function dismissOverlays(page, send) {
+  const selectors = [
+    '[id*="cookie"] button', '[class*="cookie"] button',
+    '[id*="consent"] button', '[class*="consent"] button',
+    'button[aria-label*="Accept"], button[aria-label*="accept"]',
+    'button[aria-label*="Close"], button[aria-label*="close"]',
+    '[role="dialog"] button[class*="close"]',
+    '[role="dialog"] button[aria-label*="close"]',
+    'button[class*="dismiss"]', 'button[class*="cookie-close"]',
+    'button[id*="onetrust-accept"]', '#onetrust-accept-btn-handler',
+    '.fc-cta-consent', '.fc-button-label',
+  ];
+  for (const sel of selectors) {
+    try {
+      const el = page.locator(sel).first();
+      const visible = await el.isVisible({ timeout: 600 }).catch(() => false);
+      if (visible) {
+        await el.click({ force: true, timeout: 2000 });
+        await page.waitForTimeout(600);
+        send('LOG', { level: 'info', message: `  ✓ Dismissed overlay` });
+        break;
+      }
+    } catch (_) {}
+  }
+}
+
+async function extractPageDOM(page) {
+  return await page.evaluate(() => {
+    const getSelector = (el) => {
+      const dt = el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-qa');
+      if (dt) return `[data-testid="${dt}"]`;
+      if (el.id) return `#${el.id}`;
+      if (el.getAttribute('name')) return `[name="${el.getAttribute('name')}"]`;
+      if (el.getAttribute('aria-label')) return `[aria-label="${el.getAttribute('aria-label')}"]`;
+      if (el.getAttribute('placeholder')) return `[placeholder="${el.getAttribute('placeholder')}"]`;
+      const tag = el.tagName.toLowerCase();
+      const cls = (typeof el.className === 'string' ? el.className : '').split(' ').filter(Boolean).slice(0, 2).join('.');
+      return tag + (cls ? '.' + cls : '');
+    };
+    const getLabel = (el) => {
+      if (el.id) {
+        const lbl = document.querySelector(`label[for="${el.id}"]`);
+        if (lbl) return lbl.textContent?.trim() || '';
+      }
+      const parent = el.closest('label');
+      if (parent) return (parent.textContent || '').trim().slice(0, 60);
+      return el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
+    };
+    const isVisible = (el) => {
+      const s = window.getComputedStyle(el);
+      return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+    };
+
+    const inputs = [];
+    document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])').forEach(el => {
+      if (!isVisible(el)) return;
+      inputs.push({
+        selector: getSelector(el), type: el.type || 'text', label: getLabel(el),
+        placeholder: el.placeholder || '', required: el.required,
+        maxLength: el.maxLength > 0 ? el.maxLength : null,
+        minLength: el.minLength > 0 ? el.minLength : null,
+        pattern: el.getAttribute('pattern') || null,
+        autocomplete: el.getAttribute('autocomplete') || null,
+      });
+    });
+
+    const selects = [];
+    document.querySelectorAll('select').forEach(el => {
+      if (!isVisible(el)) return;
+      const options = Array.from(el.options).map(o => ({ value: o.value, text: o.text })).filter(o => o.value).slice(0, 8);
+      selects.push({ selector: getSelector(el), label: getLabel(el), options });
+    });
+
+    const textareas = [];
+    document.querySelectorAll('textarea').forEach(el => {
+      if (!isVisible(el)) return;
+      textareas.push({ selector: getSelector(el), label: getLabel(el), placeholder: el.placeholder || '' });
+    });
+
+    const buttons = [];
+    document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]').forEach(el => {
+      if (!isVisible(el)) return;
+      const text = (el.textContent || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+      if (!text) return;
+      const type = el.getAttribute('type') || 'button';
+      buttons.push({ selector: getSelector(el), text, type });
+    });
+
+    return { inputs, selects, textareas, buttons, title: document.title, url: window.location.href };
+  });
+}
+
+async function callClaude(apiKey, model, domData, url) {
+  const domSummary = JSON.stringify({
+    pageTitle: domData.title, url,
+    inputs: domData.inputs,
+    selects: domData.selects,
+    textareas: domData.textareas,
+    submitButtons: domData.buttons.filter(b =>
+      b.type === 'submit' ||
+      /submit|login|sign.?in|register|send|continue|next|ok|confirm/i.test(b.text)
+    ).slice(0, 4),
+    allButtons: domData.buttons.slice(0, 6),
+  }, null, 2);
+
+  const systemPrompt = `You are an expert QA test automation engineer. Analyze this web page's form structure and generate a comprehensive test plan.
+
+Generate exactly 5 test scenarios:
+1. "Valid Submission" (type: "valid") - Fill all fields with realistic correct data and submit
+2. "Empty Required Fields" (type: "boundary_empty") - Leave fields empty, attempt submit
+3. "Minimum Length Values" (type: "boundary_min") - Fill with single char / minimum boundary data
+4. "Maximum Length Values" (type: "boundary_max") - Fill with very long strings near limits
+5. "Invalid Format Data" (type: "invalid") - Use wrong formats (bad email, letters in number field, etc.)
+
+For each test scenario, list actions using ONLY these types:
+- "focus": focus an element (selector required)
+- "fill": fill an input (selector + value required)  
+- "select": select a dropdown option (selector + value required)
+- "click": click a button or element (selector required)
+- "wait": wait milliseconds (value = ms as string, e.g. "1000")
+- "check_response": check if page changed after submit (no selector needed)
+
+Rules:
+- Use EXACT selectors from the DOM data — do not invent selectors
+- For valid test: use realistic data (real email like "test.user@example.com", real name "John Smith", real phone "555-0100", passwords like "SecurePass123!")
+- For boundary_min: use single character "a", "1", "a@b.co"  
+- For boundary_max: use 200+ character strings for text, repeat a char pattern
+- For invalid: bad email (no @), letters in number fields, future dates for DOB etc.
+- Always end each scenario with a "wait" (1500ms) then "check_response"
+- Skip submit if there is no visible submit button
+- Return ONLY valid JSON, no markdown fences, no explanations
+
+Exact JSON structure required:
+{
+  "tests": [
+    {
+      "name": "string",
+      "type": "valid|boundary_empty|boundary_min|boundary_max|invalid",
+      "description": "string",
+      "actions": [
+        { "type": "focus|fill|select|click|wait|check_response", "selector": "css_or_empty", "value": "string", "description": "string" }
+      ]
+    }
+  ]
+}`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: `Page DOM:\n${domSummary}` }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Claude API error ${response.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = await response.json();
+  const raw = (data.content?.[0]?.text ?? '').trim();
+  try { return JSON.parse(raw); } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+    throw new Error('Claude returned invalid JSON');
+  }
+}
+
+async function executeAIAction(page, action, send) {
+  const timeout = 8000;
+  if (action.description) {
+    send('LOG', { level: 'info', message: `    ↳ ${action.description}` });
+  }
+  switch (action.type) {
+    case 'focus': {
+      if (!action.selector) break;
+      const loc = page.locator(action.selector).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await loc.focus({ timeout: 4000 }).catch(() => {});
+      await page.waitForTimeout(350);
+      break;
+    }
+    case 'fill': {
+      if (!action.selector) break;
+      const loc = page.locator(action.selector).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await loc.focus({ timeout: 4000 }).catch(() => {});
+      await page.waitForTimeout(250);
+      await loc.fill(action.value || '', { timeout });
+      await page.waitForTimeout(200);
+      break;
+    }
+    case 'click': {
+      if (!action.selector) break;
+      const loc = page.locator(action.selector).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(250);
+      try { await loc.click({ timeout }); }
+      catch { await loc.click({ force: true, timeout }); }
+      break;
+    }
+    case 'select': {
+      if (!action.selector) break;
+      const loc = page.locator(action.selector).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+      await loc.selectOption(action.value || '', { timeout }).catch(async () => {
+        await loc.selectOption({ index: 1 }, { timeout }).catch(() => {});
+      });
+      break;
+    }
+    case 'wait': {
+      const ms = parseInt(action.value || '1000');
+      await page.waitForTimeout(isNaN(ms) ? 1000 : Math.min(ms, 5000));
+      break;
+    }
+    case 'check_response': {
+      await page.waitForTimeout(800);
+      break;
+    }
+    default:
+      await page.waitForTimeout(200);
+  }
+}
+
+app.post('/api/ai-live-test', async (req, res) => {
+  const { url, apiKey, model = 'claude-sonnet-4-5' } = req.body || {};
+  if (!url) { res.status(400).json({ error: 'url is required' }); return; }
+  if (!apiKey) { res.status(400).json({ error: 'apiKey is required' }); return; }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const send = (type, payload) => {
+    try { res.write(`data: ${JSON.stringify({ type, payload })}\n\n`); } catch (_) {}
+  };
+
+  let browser = null;
+  let frameActive = false;
+  let frameTimer = null;
+
+  const startFrames = (page) => {
+    frameActive = true;
+    const loop = async () => {
+      if (!frameActive) return;
+      try {
+        const buf = await page.screenshot({ type: 'jpeg', quality: 55, fullPage: false });
+        send('FRAME', { frameBase64: buf.toString('base64') });
+      } catch (_) {}
+      if (frameActive) frameTimer = setTimeout(loop, 80);
+    };
+    loop();
+  };
+
+  const stopFrames = () => {
+    frameActive = false;
+    if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+  };
+
+  try {
+    send('LOG', { level: 'info', message: '🤖 Claude AI Live Tester starting…' });
+    send('LOG', { level: 'info', message: `   Model: ${model}` });
+    send('LOG', { level: 'info', message: `   Target: ${url}` });
+
+    const launchOpts = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOpts.executablePath = CHROMIUM_PATH;
+
+    browser = await chromium.launch(launchOpts);
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    const page = await context.newPage();
+
+    page.on('dialog', async (dialog) => {
+      send('LOG', { level: 'info', message: `  📋 Auto-dismissed dialog: "${dialog.message().slice(0, 60)}"` });
+      await dialog.dismiss().catch(() => {});
+    });
+
+    send('LOG', { level: 'success', message: '✓ Browser launched' });
+    startFrames(page);
+
+    send('LOG', { level: 'info', message: `\n🌐 Navigating to ${url}…` });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
+    send('LOG', { level: 'success', message: `✓ Page loaded: "${await page.title()}"` });
+
+    send('LOG', { level: 'info', message: '\n🔍 Checking for overlays/popups…' });
+    await dismissOverlays(page, send);
+
+    send('LOG', { level: 'info', message: '\n🔬 Analyzing page structure…' });
+    const dom = await extractPageDOM(page);
+    send('LOG', { level: 'info', message: `   Found: ${dom.inputs.length} inputs · ${dom.selects.length} selects · ${dom.textareas.length} textareas · ${dom.buttons.length} buttons` });
+    send('DOM_SUMMARY', { inputs: dom.inputs.length, selects: dom.selects.length, textareas: dom.textareas.length, buttons: dom.buttons.length });
+
+    send('LOG', { level: 'info', message: `\n🧠 Sending to Claude (${model}) for analysis…` });
+    const plan = await callClaude(apiKey, model, dom, url);
+    const tests = plan.tests || [];
+    send('LOG', { level: 'success', message: `✓ Claude generated ${tests.length} test scenario(s)` });
+    send('TEST_PLAN', { tests: tests.map((t, i) => ({ index: i, name: t.name, type: t.type, description: t.description, status: 'pending' })) });
+
+    let passed = 0, failed = 0;
+
+    for (let ti = 0; ti < tests.length; ti++) {
+      const test = tests[ti];
+      send('LOG', { level: 'step', message: `\n━━ Scenario ${ti + 1}/${tests.length}: ${test.name} ━━` });
+      send('TEST_STATUS', { index: ti, status: 'running' });
+
+      try {
+        const curUrl = page.url();
+        if (ti > 0 && curUrl !== url) {
+          send('LOG', { level: 'info', message: `  ↺ Returning to ${url}…` });
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.waitForTimeout(1500);
+          await dismissOverlays(page, send);
+        }
+
+        for (const action of (test.actions || [])) {
+          await executeAIAction(page, action, send);
+        }
+
+        send('LOG', { level: 'success', message: `  ✅ Passed` });
+        send('TEST_STATUS', { index: ti, status: 'passed' });
+        passed++;
+      } catch (err) {
+        const msg = (err.message || String(err)).split('\n')[0].slice(0, 120);
+        send('LOG', { level: 'error', message: `  ❌ Failed: ${msg}` });
+        send('TEST_STATUS', { index: ti, status: 'failed', error: msg });
+        failed++;
+      }
+    }
+
+    stopFrames();
+    send('LOG', { level: passed === tests.length && tests.length > 0 ? 'success' : 'error',
+      message: `\n🏁 Complete — ${passed} passed · ${failed} failed · ${tests.length} total` });
+    send('COMPLETE', { passed, failed, total: tests.length });
+
+  } catch (err) {
+    stopFrames();
+    const msg = (err.message || String(err)).split('\n')[0].slice(0, 200);
+    send('LOG', { level: 'error', message: `\n💥 Fatal error: ${msg}` });
+    send('COMPLETE', { passed: 0, failed: 0, total: 0, error: msg });
+  } finally {
+    stopFrames();
+    if (browser) await browser.close().catch(() => {});
+    res.end();
+  }
+});
+
 // ── Live Browser: SSE streaming + REST events ─────────────────────────────
 // Sessions map: sessionId → { browser, page, active, loopTimer, navigating, sseRes }
 const liveSessions = new Map();
