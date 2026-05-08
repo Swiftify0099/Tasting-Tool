@@ -45,6 +45,125 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.post('/api/extract-dom', async (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url is required' });
+
+  let browser;
+  try {
+    const launchOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOptions.executablePath = CHROMIUM_PATH;
+
+    browser = await chromium.launch(launchOptions);
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    const page = await context.newPage();
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Give JS a moment to render dynamic content
+    await page.waitForTimeout(1500);
+
+    const elements = await page.evaluate(() => {
+      const results = [];
+      const seen = new WeakSet();
+      let uid = 0;
+
+      const SELECTORS = [
+        'button', 'input', 'select', 'textarea', 'a[href]',
+        '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+        '[role="textbox"]', '[role="combobox"]', '[role="menuitem"]',
+        'form', '[data-testid]', '[data-cy]', '[data-qa]',
+      ];
+
+      const getXPath = (el) => {
+        if (el.id) return `//*[@id="${el.id}"]`;
+        const parts = [];
+        let node = el;
+        while (node && node.nodeType === 1) {
+          let idx = 1;
+          let sib = node.previousSibling;
+          while (sib) {
+            if (sib.nodeType === 1 && sib.tagName === node.tagName) idx++;
+            sib = sib.previousSibling;
+          }
+          parts.unshift(node.tagName.toLowerCase() + '[' + idx + ']');
+          node = node.parentElement;
+        }
+        return '/' + parts.join('/');
+      };
+
+      SELECTORS.forEach(sel => {
+        try {
+          document.querySelectorAll(sel).forEach(el => {
+            if (seen.has(el)) return;
+            seen.add(el);
+
+            const tag = el.tagName.toLowerCase();
+            const elId = el.id || '';
+            const name = el.getAttribute('name') || '';
+            const ariaLabel = el.getAttribute('aria-label') || '';
+            const placeholder = el.getAttribute('placeholder') || '';
+            const dataTestId = el.getAttribute('data-testid') || el.getAttribute('data-cy') || el.getAttribute('data-qa') || '';
+            const role = el.getAttribute('role') || tag;
+            const href = el.getAttribute('href') || '';
+            const type = el.getAttribute('type') || tag;
+            const rawText = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+            const className = typeof el.className === 'string' ? el.className : '';
+
+            // Skip hidden elements
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') return;
+
+            let selector = '';
+            let quality = 'poor';
+            if (dataTestId)    { selector = `[data-testid="${dataTestId}"]`; quality = 'excellent'; }
+            else if (elId)     { selector = `#${elId}`;                      quality = 'good'; }
+            else if (name)     { selector = `[name="${name}"]`;              quality = 'good'; }
+            else if (ariaLabel){ selector = `[aria-label="${ariaLabel}"]`;   quality = 'fair'; }
+            else if (placeholder){ selector = `[placeholder="${placeholder}"]`; quality = 'fair'; }
+            else if (rawText && (tag === 'button' || tag === 'a') && rawText.length < 50) {
+              selector = `text="${rawText}"`; quality = 'fair';
+            } else {
+              const cls = className.split(' ').filter(Boolean).slice(0, 2).join('.');
+              selector = tag + (cls ? '.' + cls : '');
+              quality = 'poor';
+            }
+
+            let category = 'other';
+            if (tag === 'button' || (tag === 'input' && ['button','submit','reset'].includes(type)) || role === 'button') { category = 'button'; }
+            else if ((tag === 'input' && type === 'checkbox') || role === 'checkbox') { category = 'checkbox'; }
+            else if ((tag === 'input' && type === 'radio')    || role === 'radio')    { category = 'radio'; }
+            else if (tag === 'input'    || role === 'textbox')  { category = 'input'; }
+            else if (tag === 'select'   || role === 'combobox') { category = 'select'; }
+            else if (tag === 'textarea')                        { category = 'textarea'; }
+            else if (tag === 'a')                               { category = 'link'; }
+            else if (tag === 'form')                            { category = 'form'; }
+
+            results.push({
+              uid: String(++uid), tag, type, elementId: elId, name, ariaLabel,
+              placeholder, dataTestId, text: rawText, selector,
+              xpath: getXPath(el), role, className, href, category, selectorQuality: quality,
+            });
+          });
+        } catch (_) {}
+      });
+
+      return results;
+    });
+
+    await browser.close();
+    res.json({ elements, url });
+  } catch (err) {
+    if (browser) await browser.close().catch(() => {});
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
 app.post('/api/run-test', async (req, res) => {
   const { flow } = req.body || {};
 
