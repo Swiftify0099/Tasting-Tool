@@ -252,8 +252,14 @@ app.post('/api/run-test', async (req, res) => {
 });
 
 async function executeStep(page, step, baseUrl) {
-  const sel = step.selector ? step.selector : '[data-testid="element"]';
+  const sel = (step.selector && step.selector.trim()) ? step.selector.trim() : null;
   const timeout = (step.timeout && step.timeout > 0) ? step.timeout : 15000;
+
+  // Actions that need an element selector
+  const needsSelector = ['click','dblclick','rightclick','hover','fill','type','clear','select','check','uncheck','focus','blur','upload','assert'];
+  if (needsSelector.includes(step.action) && !sel) {
+    throw new Error(`Step "${step.label || step.action}" has no selector configured. Open the Builder and set a selector for this step.`);
+  }
 
   switch (step.action) {
     case 'visit': {
@@ -393,6 +399,150 @@ async function executeStep(page, step, baseUrl) {
       await page.waitForTimeout(300);
   }
 }
+
+// ── Live Browser: SSE streaming + REST events ─────────────────────────────
+// Sessions map: sessionId → { browser, page, active, loopTimer, navigating, sseRes }
+const liveSessions = new Map();
+
+function makeSessionId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// GET /api/live/stream  — opens SSE stream, launches Chromium, starts frame loop
+app.get('/api/live/stream', async (req, res) => {
+  const sessionId = makeSessionId();
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const sendEvent = (obj) => {
+    try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
+  };
+
+  const session = { browser: null, page: null, active: true, loopTimer: null, navigating: false, sseRes: res };
+  liveSessions.set(sessionId, session);
+
+  const captureLoop = async () => {
+    if (!session.active || !session.page) return;
+    if (!session.navigating) {
+      try {
+        const buf = await session.page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+        const url = session.page.url();
+        sendEvent({ type: 'frame', data: buf.toString('base64'), url: url === 'about:blank' ? '' : url });
+      } catch (_) {}
+    }
+    if (session.active) session.loopTimer = setTimeout(captureLoop, 80);
+  };
+
+  const cleanup = async () => {
+    session.active = false;
+    if (session.loopTimer) clearTimeout(session.loopTimer);
+    if (session.browser) await session.browser.close().catch(() => {});
+    liveSessions.delete(sessionId);
+  };
+
+  req.on('close', cleanup);
+
+  try {
+    const launchOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOptions.executablePath = CHROMIUM_PATH;
+
+    session.browser = await chromium.launch(launchOptions);
+    const context = await session.browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    session.page = await context.newPage();
+    await session.page.goto('about:blank');
+
+    sendEvent({ type: 'ready', sessionId, url: '' });
+    captureLoop();
+  } catch (err) {
+    sendEvent({ type: 'error', message: `Failed to launch browser: ${err.message}` });
+    await cleanup();
+    res.end();
+  }
+});
+
+// POST /api/live/event  — forward a user interaction to Playwright
+app.post('/api/live/event', async (req, res) => {
+  const { sessionId, type, ...data } = req.body || {};
+  const session = liveSessions.get(sessionId);
+  if (!session || !session.page) return res.json({ ok: false, error: 'session not found' });
+
+  const page = session.page;
+  try {
+    switch (type) {
+      case 'navigate': {
+        session.navigating = true;
+        try {
+          await page.goto(data.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          if (session.sseRes) {
+            try { session.sseRes.write(`data: ${JSON.stringify({ type: 'navigated', url: page.url() })}\n\n`); } catch (_) {}
+          }
+        } catch (e) {
+          if (session.sseRes) {
+            try { session.sseRes.write(`data: ${JSON.stringify({ type: 'error', message: `Navigation failed: ${e.message.split('\n')[0]}` })}\n\n`); } catch (_) {}
+          }
+        } finally {
+          session.navigating = false;
+        }
+        break;
+      }
+      case 'goback':
+        try { await page.goBack({ waitUntil: 'domcontentloaded', timeout: 10000 }); } catch (_) {}
+        break;
+      case 'goforward':
+        try { await page.goForward({ waitUntil: 'domcontentloaded', timeout: 10000 }); } catch (_) {}
+        break;
+      case 'reload':
+        try { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }); } catch (_) {}
+        break;
+      case 'click':
+        await page.mouse.click(data.x, data.y, { button: data.button || 'left' });
+        break;
+      case 'dblclick':
+        await page.mouse.dblclick(data.x, data.y);
+        break;
+      case 'mousemove':
+        await page.mouse.move(data.x, data.y);
+        break;
+      case 'keydown':
+        await page.keyboard.press(data.key);
+        break;
+      case 'type':
+        await page.keyboard.type(data.text, { delay: 0 });
+        break;
+      case 'wheel':
+        await page.mouse.wheel(data.deltaX || 0, data.deltaY || 0);
+        break;
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/live/stop  — close a session explicitly
+app.post('/api/live/stop', async (req, res) => {
+  const { sessionId } = req.body || {};
+  const session = liveSessions.get(sessionId);
+  if (session) {
+    session.active = false;
+    if (session.loopTimer) clearTimeout(session.loopTimer);
+    if (session.browser) await session.browser.close().catch(() => {});
+    liveSessions.delete(sessionId);
+  }
+  res.json({ ok: true });
+});
 
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
