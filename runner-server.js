@@ -1,6 +1,34 @@
 const express = require('express');
 const { chromium } = require('playwright');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+function findSystemChromium() {
+  const candidates = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  try {
+    const which = execSync('which chromium 2>/dev/null || which chromium-browser 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (which) return which;
+  } catch (_) {}
+  try {
+    const nixResult = execSync(
+      'find /nix/store -maxdepth 3 -name "chromium" -path "*/bin/chromium" 2>/dev/null | grep -v "\\.drv" | head -1',
+      { encoding: 'utf8', timeout: 5000 }
+    ).trim();
+    if (nixResult) return nixResult;
+  } catch (_) {}
+  return null;
+}
+
+const CHROMIUM_PATH = findSystemChromium();
+console.log('System Chromium path:', CHROMIUM_PATH || '(not found, will use playwright bundled)');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -39,10 +67,13 @@ app.post('/api/run-test', async (req, res) => {
     send('TEST_RUN_LOG', { logType: 'info', message: '▶  Starting Playwright runner…' });
     send('TEST_RUN_LOG', { logType: 'info', message: 'Browser: chromium (headless)' });
 
-    browser = await chromium.launch({
+    const launchOptions = {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOptions.executablePath = CHROMIUM_PATH;
+
+    browser = await chromium.launch(launchOptions);
 
     const context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
@@ -247,11 +278,9 @@ async function executeStep(page, step, baseUrl) {
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Playwright runner server listening on port ${PORT}`);
-  console.log('Installing Chromium browser (first-time setup)…');
-  try {
-    execSync('npx playwright install chromium 2>&1', { stdio: 'inherit', timeout: 120000 });
-    console.log('Chromium ready.');
-  } catch (e) {
-    console.error('Warning: Chromium install failed. Tests may not run:', e.message);
+  if (CHROMIUM_PATH) {
+    console.log('Chromium ready (using system binary).');
+  } else {
+    console.warn('System Chromium not found — tests may fail if bundled binary has missing libs.');
   }
 });
