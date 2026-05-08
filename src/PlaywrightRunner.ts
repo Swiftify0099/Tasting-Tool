@@ -100,6 +100,29 @@ export class PlaywrightRunner {
         document.head.appendChild(s);
       `);
 
+      let frameLoopActive = false;
+      let frameLoopTimer: NodeJS.Timeout | null = null;
+
+      const startFrameLoop = () => {
+        frameLoopActive = true;
+        const loop = async () => {
+          if (!frameLoopActive || this._aborted || page.isClosed()) return;
+          try {
+            const buf: Buffer = await page.screenshot({ type: 'jpeg', quality: 50, fullPage: false });
+            this._post('TEST_RUN_FRAME', { frameBase64: buf.toString('base64') });
+          } catch (_) { }
+          if (frameLoopActive) frameLoopTimer = setTimeout(loop, 60); // ~16 FPS streaming for much smoother live video
+        };
+        loop();
+      };
+
+      const stopFrameLoop = () => {
+        frameLoopActive = false;
+        if (frameLoopTimer) { clearTimeout(frameLoopTimer); frameLoopTimer = null; }
+      };
+
+      startFrameLoop();
+
       const enabledSteps = flow.steps.filter(s => s.enabled);
       this._post('TEST_RUN_LOG', { logType: 'info', message: `   Steps: ${enabledSteps.length} enabled` });
 
@@ -107,6 +130,7 @@ export class PlaywrightRunner {
       for (let i = 0; i < enabledSteps.length; i++) {
         if (this._aborted) {
           this._post('TEST_RUN_LOG', { logType: 'error', message: '✗ Run aborted.' });
+          stopFrameLoop();
           break;
         }
 
@@ -127,9 +151,6 @@ export class PlaywrightRunner {
             await this._highlightElement(page, targetSel);
           }
 
-          /* Pre-action screenshot (shows highlight) */
-          await this._sendScreenshot(page, i, step.action, 'before', color);
-
           /* Execute the step */
           await this._executeStep(page, step, flow.baseUrl, defaultTimeout);
 
@@ -139,14 +160,12 @@ export class PlaywrightRunner {
           }
 
           /* Small pause so the user can see the result */
-          await page.waitForTimeout(200);
-
-          /* Post-action screenshot */
-          await this._sendScreenshot(page, i, step.action, 'after', color);
+          await page.waitForTimeout(600); // Allow slightly more time to see the live action result stream smoothly
 
           this._post('TEST_RUN_LOG', { logType: 'success', message: `   ✓ Step ${i + 1} passed` });
         } catch (stepErr) {
           if (this._aborted) { break; }
+          stopFrameLoop();
           const msg = (stepErr as Error).message?.slice(0, 200) ?? 'Unknown error';
           await this._sendScreenshot(page, i, step.action, 'error', '#f87171');
           this._post('TEST_RUN_LOG', { logType: 'error', message: `   ✗ Step ${i + 1} failed: ${msg}` });
@@ -156,6 +175,8 @@ export class PlaywrightRunner {
           return;
         }
       }
+
+      stopFrameLoop();
 
       /* ── 5. Close & report ─────────────────────────────────────── */
       if (browser) {

@@ -42,12 +42,13 @@ function normalizeUrl(raw: string): string {
 
 /* ── ScriptActionPreview — live animated visualization of what the script is doing ── */
 function ScriptActionPreview({ running, status, activeAction, activeLabel, activeValue,
-  stepIdx, totalSteps, steps, activeStepIdx, canvasRef }: {
+  stepIdx, totalSteps, steps, activeStepIdx, canvasRef, hasLiveFrame }: {
   running: boolean; status: string;
   activeAction: string; activeLabel: string; activeValue?: string;
   stepIdx: number|null; totalSteps: number;
   steps: TestStep[]; activeStepIdx: number|null;
   canvasRef: React.RefObject<HTMLCanvasElement>;
+  hasLiveFrame: boolean;
 }) {
   const color   = ACTION_COLOR[activeAction] ?? ACTION_COLOR.default;
   const actText = ACTION_LABEL[activeAction] ?? ACTION_LABEL.default;
@@ -57,17 +58,22 @@ function ScriptActionPreview({ running, status, activeAction, activeLabel, activ
 
   return (
     <div className="flex flex-col h-full bg-[#0b0f18]">
-      {/* Hidden canvas — stays mounted so frame draws always work */}
-      <canvas ref={canvasRef} width={1280} height={720} className="hidden" />
-
       {/* ── Main visualization ── */}
       <div className="flex-1 flex flex-col items-center justify-center overflow-hidden relative px-6 py-6">
         {/* Dot-grid background */}
         <div className="absolute inset-0 opacity-[0.04]"
           style={{ backgroundImage: 'radial-gradient(circle, #94a3b8 1px, transparent 1px)', backgroundSize: '22px 22px' }} />
 
+        {/* Live Browser Canvas */}
+        <canvas 
+          ref={canvasRef} 
+          width={1280} 
+          height={720} 
+          className={`absolute inset-0 w-full h-full object-contain z-0 transition-opacity duration-300 ${hasLiveFrame ? 'opacity-100' : 'opacity-0 hidden'}`} 
+        />
+
         {/* ─── RUNNING ─── */}
-        {running && (
+        {running && !hasLiveFrame && (
           <div className="relative z-10 flex flex-col items-center gap-5 text-center w-full max-w-xs">
 
             {/* Progress bar */}
@@ -124,8 +130,39 @@ function ScriptActionPreview({ running, status, activeAction, activeLabel, activ
           </div>
         )}
 
+        {/* ─── RUNNING (With Live Frame Overlay) ─── */}
+        {running && hasLiveFrame && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-3 text-center w-full max-w-sm bg-slate-900/90 backdrop-blur-md p-4 rounded-2xl border border-slate-700/80 shadow-2xl">
+             <div className="flex items-center gap-3 w-full">
+               <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                 style={{ background: `${color}20`, border: `1px solid ${color}40` }}>
+                 {(() => {
+                    const Icon = ACTION_ICON[activeAction] ?? ACTION_ICON.default;
+                    return <Icon className="w-5 h-5" style={{ color }} />;
+                  })()}
+               </div>
+               <div className="flex-1 text-left min-w-0">
+                 <div className="flex justify-between items-center mb-0.5">
+                   <p className="text-sm font-bold text-white tracking-wide truncate">{actText}</p>
+                   <span className="text-[10px] font-mono text-slate-400">{currentNum}/{totalSteps}</span>
+                 </div>
+                 {activeLabel && (
+                    <p className="text-xs text-slate-400 truncate" title={activeLabel}>
+                      {activeLabel}
+                    </p>
+                  )}
+               </div>
+             </div>
+             {/* Progress bar */}
+             <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mt-1">
+              <div className="h-full rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
+            </div>
+          </div>
+        )}
+
         {/* ─── IDLE ─── */}
-        {!running && status === 'idle' && (
+        {!running && status === 'idle' && !hasLiveFrame && (
           <div className="z-10 w-full max-w-sm">
             <div className="text-center mb-5">
               <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto mb-3">
@@ -168,8 +205,8 @@ function ScriptActionPreview({ running, status, activeAction, activeLabel, activ
 
         {/* ─── PASSED ─── */}
         {!running && status === 'passed' && (
-          <div className="z-10 flex flex-col items-center gap-5 text-center">
-            <div className="relative">
+          <div className={`z-10 flex flex-col items-center gap-5 text-center ${hasLiveFrame ? 'absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md p-6 rounded-2xl border border-slate-700/80 shadow-2xl' : ''}`}>
+            <div className={`relative ${hasLiveFrame ? 'hidden' : ''}`}>
               <div className="absolute inset-0 rounded-full bg-emerald-400/20 animate-ping" />
               <div className="relative w-24 h-24 rounded-full bg-emerald-500/15 border-2 border-emerald-500/40 flex items-center justify-center"
                 style={{ boxShadow: '0 0 48px #34d39925' }}>
@@ -178,10 +215,10 @@ function ScriptActionPreview({ running, status, activeAction, activeLabel, activ
             </div>
             <div>
               <p className="text-2xl font-bold text-emerald-400">All Passed!</p>
-              <p className="text-sm text-slate-500 mt-1">{totalSteps} step{totalSteps !== 1 ? 's' : ''} completed</p>
+              <p className={`text-sm mt-1 ${hasLiveFrame ? 'text-slate-300' : 'text-slate-500'}`}>{totalSteps} step{totalSteps !== 1 ? 's' : ''} completed</p>
             </div>
             {/* Compact step badges */}
-            <div className="flex flex-wrap gap-1.5 justify-center max-w-[280px]">
+            <div className={`flex flex-wrap gap-1.5 justify-center ${hasLiveFrame ? 'max-w-[400px]' : 'max-w-[280px]'}`}>
               {enabled.map((step) => {
                 const c = ACTION_COLOR[step.action] ?? ACTION_COLOR.default;
                 return (
@@ -197,14 +234,14 @@ function ScriptActionPreview({ running, status, activeAction, activeLabel, activ
 
         {/* ─── FAILED ─── */}
         {!running && status === 'failed' && (
-          <div className="z-10 flex flex-col items-center gap-5 text-center">
-            <div className="w-24 h-24 rounded-full bg-red-500/15 border-2 border-red-500/40 flex items-center justify-center"
+          <div className={`z-10 flex flex-col items-center gap-5 text-center ${hasLiveFrame ? 'absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md p-6 rounded-2xl border border-slate-700/80 shadow-2xl' : ''}`}>
+            <div className={`w-24 h-24 rounded-full bg-red-500/15 border-2 border-red-500/40 flex items-center justify-center ${hasLiveFrame ? 'hidden' : ''}`}
               style={{ boxShadow: '0 0 48px #f8717125' }}>
               <XCircle className="w-10 h-10 text-red-400" />
             </div>
             <div>
               <p className="text-2xl font-bold text-red-400">Test Failed</p>
-              <p className="text-sm text-slate-500 mt-1">Check the terminal log for details</p>
+              <p className={`text-sm mt-1 ${hasLiveFrame ? 'text-slate-300' : 'text-slate-500'}`}>Check the terminal log for details</p>
             </div>
           </div>
         )}
@@ -333,6 +370,17 @@ export default function RunnerPage() {
     const data = payload as { stepIdx: number; action: string; phase: string; screenshotBase64: string };
     if (data.screenshotBase64) {
       setScreenshotData(data.screenshotBase64);
+      const img = imgRef.current;
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, 1280, 720);
+          setHasLiveFrame(true);
+        }
+      };
+      img.src = `data:image/jpeg;base64,${data.screenshotBase64}`;
     }
   });
 
@@ -557,6 +605,7 @@ export default function RunnerPage() {
                 steps={currentFlow.steps}
                 activeStepIdx={activeStepIdx}
                 canvasRef={canvasRef}
+                hasLiveFrame={hasLiveFrame}
               />
             </div>
           </div>
