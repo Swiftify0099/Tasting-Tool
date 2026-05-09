@@ -263,7 +263,7 @@ export class PanelManager {
 
       const options = {
         browserType: 'chromium',
-        headless:    false,
+        headless:    true, // Run headlessly to stream video directly into the UI
         timeout:     15000,
         slowMo:      500, // 500ms delay to make actions visible in the preview window
       };
