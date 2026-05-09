@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useCallback } from 'react';
 import { DOMElement } from '../types';
-import { useVSCode, useVSCodeListener } from '../hooks/useVSCode';
 
 interface DOMState {
   elements: DOMElement[];
@@ -59,21 +58,22 @@ export function DOMProvider({ children }: { children: React.ReactNode }) {
     lastExtractedAt: null,
   });
 
-  const { postMessage } = useVSCode();
-
-  useVSCodeListener('DOM_EXTRACTED', (payload) => {
-    const p = payload as { elements: DOMElement[]; url: string };
-    dispatch({ type: 'SET_ELEMENTS', elements: p.elements, url: p.url });
-  });
-
-  useVSCodeListener('DOM_EXTRACT_ERROR', (payload) => {
-    dispatch({ type: 'SET_ERROR', error: payload as string });
-  });
-
   const extractDOM = useCallback((url: string) => {
     dispatch({ type: 'SET_EXTRACTING', url });
-    postMessage('EXTRACT_DOM', url);
-  }, [postMessage]);
+    fetch('/api/extract-dom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        dispatch({ type: 'SET_ELEMENTS', elements: data.elements, url: data.url || url });
+      })
+      .catch((err) => {
+        dispatch({ type: 'SET_ERROR', error: err.message || String(err) });
+      });
+  }, []);
 
   const selectDOMElement = useCallback((el: DOMElement | null) => {
     dispatch({ type: 'SELECT_ELEMENT', element: el });
@@ -83,7 +83,6 @@ export function DOMProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'CLEAR' });
   }, []);
 
-  /** Filter elements relevant to a given Playwright action */
   const getElementsForAction = useCallback((action: string): DOMElement[] => {
     const { elements } = domState;
     if (!elements.length) return [];

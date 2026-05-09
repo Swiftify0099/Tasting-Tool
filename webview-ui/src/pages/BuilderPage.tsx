@@ -5,20 +5,23 @@ import { useDOM } from '../context/DOMContext';
 import Toolbox from '../components/Toolbox';
 import Canvas from '../components/Canvas';
 import PropertiesPanel from '../components/PropertiesPanel';
+import SmartBuildModal from '../components/SmartBuildModal';
+import { TestStep } from '../types';
 import {
   Save, Code2, Play, Plus, Download, Upload,
-  Wrench, Eye, EyeOff, Zap, RefreshCw, Crosshair
+  Wrench, Eye, EyeOff, Zap, RefreshCw, Crosshair, Wand2
 } from 'lucide-react';
 
 export default function BuilderPage() {
   const navigate = useNavigate();
   const { state, saveFlow, generateTest, newFlow,
-    updateFlow, exportJson, showToast } = useFlow();
+    updateFlow, exportJson, showToast, importSteps, clearSteps } = useFlow();
   const { domState } = useDOM();
   const { currentFlow, isSaving, isGenerating } = state;
 
-  const [showProps, setShowProps] = useState(true);
-  const [showToolbox, setShowToolbox] = useState(true);
+  const [showProps, setShowProps]         = useState(true);
+  const [showToolbox, setShowToolbox]     = useState(true);
+  const [showSmartBuild, setShowSmartBuild] = useState(false);
 
   const handleImportJson = () => {
     const input = document.createElement('input');
@@ -61,6 +64,16 @@ export default function BuilderPage() {
       return;
     }
     navigate('/runner', { state: { autoRun: true } });
+  };
+
+  const handleSmartApply = (steps: TestStep[], replace: boolean) => {
+    if (replace) {
+      clearSteps();
+    }
+    importSteps(steps);
+    const url = steps.find(s => s.action === 'visit')?.url;
+    if (url) updateFlow({ baseUrl: url });
+    showToast(`✅ ${steps.length} steps ${replace ? 'loaded' : 'appended'} to canvas`, 'success');
   };
 
   return (
@@ -158,7 +171,16 @@ export default function BuilderPage() {
             }
           </button>
 
-          {/* Generate */}
+          {/* Smart Build */}
+          <button
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-300 transition-colors"
+            onClick={() => setShowSmartBuild(true)}
+            title="Auto-generate steps from a URL"
+          >
+            <Wand2 className="w-3.5 h-3.5" /> Smart Build
+          </button>
+
+          {/* Generate (to code) */}
           <button
             className={`btn-warning text-xs ${isGenerating ? 'opacity-60' : ''}`}
             onClick={handleGenerate}
@@ -214,8 +236,23 @@ export default function BuilderPage() {
         <div className="flex items-center gap-3">
           <span>Base: <b className="text-brand-400">{currentFlow.baseUrl || 'not set'}</b></span>
           {state.selectedStepId && <span className="text-brand-300">● Editing step</span>}
+          <button
+            onClick={() => setShowSmartBuild(true)}
+            className="flex items-center gap-1 text-violet-400 hover:text-violet-300 transition-colors"
+          >
+            <Wand2 className="w-3 h-3" /> Smart Build
+          </button>
         </div>
       </div>
+
+      {/* Smart Build Modal */}
+      {showSmartBuild && (
+        <SmartBuildModal
+          initialUrl={currentFlow.baseUrl || ''}
+          onApply={handleSmartApply}
+          onClose={() => setShowSmartBuild(false)}
+        />
+      )}
     </div>
   );
 }
