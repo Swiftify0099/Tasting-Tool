@@ -1,0 +1,218 @@
+// =========================================
+// AI API CONFIG
+// =========================================
+
+export const AI_API =
+"https://specifically-task-dryer-supervis// =========================================
+// SEND DOM TO AI
+// =========================================
+
+import { AI_API } from "./config";
+
+export async function askAI(payload) {
+
+    try {
+
+        const response = await fetch(AI_API, {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        return data;
+
+    } catch (err) {
+
+        console.log("AI ERROR:", err);
+
+        return null;
+    }
+}or.trycloudflare.com/generate";
+// =========================================
+// EXAMPLE PAYLOAD
+// =========================================
+
+const payload = {
+
+    goal: "Test full website",
+
+    currentUrl: window.location.href,
+
+    visitedPages: [
+        "/login"
+    ],
+
+    queue: [
+        "/dashboard"
+    ],
+
+    dom: [
+        {
+            tag: "input",
+            placeholder: "Email"
+        },
+        {
+            tag: "button",
+            text: "Login"
+        }
+    ]
+};
+// =========================================
+// CALL AI
+// =========================================
+
+const result = await askAI(payload);
+
+console.log(result);
+// =========================================
+// AI RESPONSE
+// =========================================
+
+{
+  success: true,
+
+  response: `
+  {
+    "actions":[
+      {
+        "tool":"type",
+        "selector":"input[placeholder='Email']",
+        "text":"test@gmail.com"
+      },
+      {
+        "tool":"click",
+        "selector":"button:text('Login')"
+      }
+    ],
+
+    "assertions":[
+      {
+        "selector":"text=Dashboard",
+        "expected":"visible"
+      }
+    ],
+
+    "discoveredRoutes":[
+      "/profile",
+      "/settings"
+    ],
+
+    "errors":[],
+
+    "suggestions":[]
+  }
+  `
+}
+// =========================================
+// PARSE AI JSON
+// =========================================
+
+const aiData = JSON.parse(result.response);
+
+console.log(aiData.actions);
+console.log(aiData.assertions);
+console.log(aiData.discoveredRoutes);
+// =========================================
+// RUN ACTIONS
+// =========================================
+
+for (const action of aiData.actions) {
+
+    if (action.tool === "type") {
+
+        console.log(
+            "TYPE:",
+            action.selector,
+            action.text
+        );
+    }
+
+    if (action.tool === "click") {
+
+        console.log(
+            "CLICK:",
+            action.selector
+        );
+    }
+}
+// =========================================
+// EXTRACT DOM
+// =========================================
+
+export function extractDOM() {
+
+    const elements = [
+        ...document.querySelectorAll(
+            "input,button,a,textarea,select"
+        )
+    ];
+
+    return elements.map(el => ({
+        tag: el.tagName.toLowerCase(),
+
+        text: el.innerText || "",
+
+        placeholder: el.placeholder || "",
+
+        type: el.type || "",
+
+        name: el.name || "",
+
+        id: el.id || "",
+
+        href: el.href || ""
+    }));
+}
+// =========================================
+// FULL FLOW
+// =========================================
+
+import { askAI } from "./askAI";
+import { extractDOM } from "./extractDOM";
+
+async function runAI() {
+
+    const dom = extractDOM();
+
+    const payload = {
+
+        goal: "Test full website",
+
+        currentUrl: window.location.href,
+
+        visitedPages: [],
+
+        queue: [],
+
+        dom
+    };
+
+    const result = await askAI(payload);
+
+    const aiData = JSON.parse(
+        result.response
+    );
+
+    console.log(aiData);
+}
+
+runAI();
+// =========================================
+// EXPECTED FRONTEND FLOW
+// =========================================
+
+1. Extract DOM
+2. Send DOM to AI
+3. Receive JSON response
+4. Parse response
+5. Execute actions
+6. Detect new page
+7. Extract NEW DOM
+8. Send again
+9. Continue loop

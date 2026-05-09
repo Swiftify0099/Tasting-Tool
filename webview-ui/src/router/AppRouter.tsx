@@ -9,6 +9,7 @@ import GeneratorPage from '../pages/GeneratorPage';
 import AIGeneratorPage from '../pages/AIGeneratorPage';
 import DOMInspectorPage from '../pages/DOMInspectorPage';
 import LiveBrowserPage from '../pages/LiveBrowserPage';
+import AITestPage from '../pages/AITestPage';
 
 export default function AppRouter() {
   return (
@@ -22,6 +23,7 @@ export default function AppRouter() {
         <Route path="/ai"            element={<AIGeneratorPage />} />
         <Route path="/dom-inspector" element={<DOMInspectorPage />} />
         <Route path="/live"          element={<LiveBrowserPage />} />
+        <Route path="/ai-test"       element={<AITestPage />} />
         <Route path="/runner"        element={<RunnerPage />} />
         <Route path="/history"       element={<HistoryPage />} />
         <Route path="/settings"      element={<SettingsPage />} />

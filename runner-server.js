@@ -975,6 +975,348 @@ app.post('/api/generate-script', async (req, res) => {
   }
 });
 
+// ── AI Autonomous Test Engine ──────────────────────────────────────────────
+const AI_API_URL = 'https://specifically-task-dryer-supervisor.trycloudflare.com/generate';
+
+async function callAI(payload) {
+  try {
+    const res = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    console.error('AI API error:', err.message);
+    return null;
+  }
+}
+
+async function extractDOMForAI(page) {
+  try {
+    return await page.evaluate(() => {
+      const els = [...document.querySelectorAll('input,button,a,textarea,select,[role="button"],[role="link"]')];
+      return els.slice(0, 80).map(el => ({
+        tag:         el.tagName.toLowerCase(),
+        text:        (el.innerText || el.textContent || '').trim().slice(0, 100),
+        placeholder: el.getAttribute('placeholder') || '',
+        type:        el.getAttribute('type') || '',
+        name:        el.getAttribute('name') || '',
+        id:          el.id || '',
+        href:        el.getAttribute('href') || '',
+        ariaLabel:   el.getAttribute('aria-label') || '',
+        dataTestId:  el.getAttribute('data-testid') || '',
+        selector:    el.id ? `#${el.id}` : el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : el.getAttribute('data-testid') ? `[data-testid="${el.getAttribute('data-testid')}"]` : null,
+      }));
+    });
+  } catch (_) { return []; }
+}
+
+async function executeAIAction(page, action, credentials) {
+  const timeout = 12000;
+  const tool = action.tool || action.type || '';
+  const sel  = action.selector || '';
+
+  // Auto-fill credentials if action references them by placeholder patterns
+  let text = action.text || action.value || '';
+  if (credentials) {
+    if (/email|username|user|login/i.test(sel + action.placeholder + '') && !text) text = credentials.username;
+    if (/password|pass|pwd/i.test(sel + action.placeholder + '') && !text) text = credentials.password;
+  }
+
+  switch (tool) {
+    case 'type': case 'fill': case 'input':
+      await page.locator(sel).first().fill(text, { timeout });
+      break;
+    case 'click': case 'press': case 'tap':
+      await page.locator(sel).first().click({ timeout });
+      break;
+    case 'dblclick':
+      await page.locator(sel).first().dblclick({ timeout });
+      break;
+    case 'hover':
+      await page.locator(sel).first().hover({ timeout });
+      break;
+    case 'select':
+      await page.locator(sel).first().selectOption(text, { timeout });
+      break;
+    case 'check':
+      await page.locator(sel).first().check({ timeout });
+      break;
+    case 'navigate': case 'goto': case 'visit':
+      await page.goto(action.url || sel, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      break;
+    case 'wait': case 'sleep':
+      await page.waitForTimeout(action.ms || action.duration || 1000);
+      break;
+    case 'scroll':
+      await page.evaluate((y) => window.scrollBy(0, y), action.y || 300);
+      break;
+    case 'clear':
+      await page.locator(sel).first().fill('', { timeout });
+      break;
+    default:
+      if (sel) await page.locator(sel).first().click({ timeout });
+  }
+
+  // Wait for any navigation or network to settle
+  await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+}
+
+async function runAssertion(page, assertion) {
+  const { selector, expected } = assertion;
+  if (!selector) return true;
+  try {
+    if (expected === 'visible') {
+      await page.locator(selector).first().waitFor({ state: 'visible', timeout: 5000 });
+    } else if (expected === 'hidden') {
+      await page.locator(selector).first().waitFor({ state: 'hidden', timeout: 5000 });
+    } else if (expected) {
+      const text = await page.locator(selector).first().innerText({ timeout: 5000 });
+      if (!text.includes(expected)) throw new Error(`Expected "${expected}" but got "${text}"`);
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+app.post('/api/ai-test/run', async (req, res) => {
+  const {
+    url: startUrl,
+    goal = 'Test full website',
+    credentials = null,
+    maxPages = 8,
+    maxSteps = 40,
+  } = req.body || {};
+
+  if (!startUrl) return res.status(400).json({ error: 'url is required' });
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const send = (type, payload = {}) => {
+    try { res.write(`data: ${JSON.stringify({ type, payload })}\n\n`); } catch (_) {}
+  };
+
+  // ── Session state ──
+  const visitedPages   = new Set();
+  const queue          = [startUrl];
+  const testedComponents = {};
+  const allScreenshots = [];
+  const issues         = [];
+  const discoveredSet  = new Set([startUrl]);
+  let passed = 0, failed = 0, assertPassed = 0, assertFailed = 0;
+  let stepCount = 0;
+  let browser;
+
+  try {
+    send('LOG', { level: 'info', msg: '▶  Launching Chromium…' });
+
+    const launchOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    };
+    if (CHROMIUM_PATH) launchOptions.executablePath = CHROMIUM_PATH;
+
+    browser = await chromium.launch(launchOptions);
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+    });
+    const page = await context.newPage();
+    send('LOG', { level: 'success', msg: 'Browser launched' });
+
+    // ── Main autonomous loop ──
+    while (queue.length > 0 && visitedPages.size < maxPages && stepCount < maxSteps) {
+      const currentUrl = queue.shift();
+      if (visitedPages.has(currentUrl)) continue;
+      visitedPages.add(currentUrl);
+
+      send('PAGE_START', { url: currentUrl, queueSize: queue.length, visited: visitedPages.size });
+      send('LOG', { level: 'step', msg: `📄 Testing page: ${currentUrl}` });
+
+      // Navigate
+      try {
+        await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(800);
+      } catch (e) {
+        send('LOG', { level: 'error', msg: `Navigation failed: ${e.message.split('\n')[0]}` });
+        issues.push({ page: currentUrl, issue: `Navigation failed: ${e.message.split('\n')[0]}` });
+        continue;
+      }
+
+      const pageTitle = await page.title().catch(() => '');
+      send('LOG', { level: 'info', msg: `  Title: "${pageTitle}" — extracting DOM…` });
+
+      // Screenshot of initial page state
+      const initShot = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => null);
+      if (initShot) {
+        const s = { data: initShot.toString('base64'), url: page.url(), label: 'Page loaded', passed: true };
+        allScreenshots.push(s);
+        send('SCREENSHOT', s);
+      }
+
+      // Extract DOM
+      const dom = await extractDOMForAI(page);
+      send('DOM_EXTRACTED', { url: page.url(), count: dom.length });
+      send('LOG', { level: 'info', msg: `  Extracted ${dom.length} interactive elements` });
+
+      // Build AI payload
+      const aiPayload = {
+        goal,
+        currentUrl: page.url(),
+        pageTitle,
+        visitedPages: [...visitedPages],
+        queue: [...queue].slice(0, 10),
+        dom,
+        credentials: credentials ? { username: credentials.username, hasPassword: !!credentials.password } : null,
+      };
+
+      send('AI_THINKING', { url: page.url() });
+      send('LOG', { level: 'info', msg: '  🤖 Asking AI to analyze page…' });
+
+      const aiResult = await callAI(aiPayload);
+
+      if (!aiResult) {
+        send('LOG', { level: 'error', msg: '  AI API unreachable — skipping page' });
+        issues.push({ page: currentUrl, issue: 'AI API did not respond' });
+        continue;
+      }
+
+      // Parse AI response (it returns { success, response } where response is a JSON string)
+      let aiData = { actions: [], assertions: [], discoveredRoutes: [], suggestions: [] };
+      try {
+        const raw = typeof aiResult.response === 'string' ? aiResult.response : JSON.stringify(aiResult.response || aiResult);
+        // Strip markdown code fences if AI wraps it
+        const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        aiData = JSON.parse(cleaned);
+      } catch (_) {
+        // Try extracting JSON object from the string
+        try {
+          const match = (aiResult.response || '').match(/\{[\s\S]*\}/);
+          if (match) aiData = JSON.parse(match[0]);
+        } catch (_) {}
+      }
+
+      const actionCount = (aiData.actions || []).length;
+      const routeCount  = (aiData.discoveredRoutes || []).length;
+      send('AI_RESPONSE', { actions: actionCount, routes: routeCount, assertions: (aiData.assertions||[]).length });
+      send('LOG', { level: 'success', msg: `  AI returned ${actionCount} action(s), ${routeCount} route(s)` });
+
+      // ── Execute actions ──
+      for (const action of (aiData.actions || [])) {
+        if (stepCount >= maxSteps) break;
+        stepCount++;
+
+        const actionLabel = `${action.tool || action.type} → ${action.selector || action.url || ''}`;
+        send('ACTION_EXEC', { action, stepCount });
+        send('LOG', { level: 'step', msg: `  [${stepCount}] ${actionLabel}` });
+
+        const urlBefore = page.url();
+        try {
+          await executeAIAction(page, action, credentials);
+          passed++;
+          testedComponents[action.selector || action.tool] = true;
+
+          const urlAfter = page.url();
+          const shot = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => null);
+          if (shot) {
+            const s = { data: shot.toString('base64'), url: urlAfter, label: actionLabel, passed: true };
+            allScreenshots.push(s);
+            send('SCREENSHOT', s);
+          }
+
+          if (urlAfter !== urlBefore && !visitedPages.has(urlAfter) && !discoveredSet.has(urlAfter)) {
+            queue.push(urlAfter);
+            discoveredSet.add(urlAfter);
+            send('ROUTE_FOUND', { url: urlAfter, from: urlBefore });
+            send('LOG', { level: 'info', msg: `  🔍 New route discovered: ${urlAfter}` });
+          }
+
+          send('ACTION_PASS', { action, stepCount, url: urlAfter });
+        } catch (err) {
+          failed++;
+          const errMsg = err.message.split('\n')[0];
+          send('ACTION_FAIL', { action, stepCount, error: errMsg });
+          send('LOG', { level: 'error', msg: `  ✗ Failed: ${errMsg}` });
+          issues.push({ page: currentUrl, action: actionLabel, issue: errMsg });
+
+          const errShot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
+          if (errShot) {
+            const s = { data: errShot.toString('base64'), url: page.url(), label: `Error: ${actionLabel}`, passed: false };
+            allScreenshots.push(s);
+            send('SCREENSHOT', s);
+          }
+        }
+      }
+
+      // ── Run assertions ──
+      for (const assertion of (aiData.assertions || [])) {
+        const ok = await runAssertion(page, assertion);
+        if (ok) { assertPassed++; send('LOG', { level: 'success', msg: `  ✓ Assert passed: ${assertion.selector}` }); }
+        else     { assertFailed++; send('LOG', { level: 'error',   msg: `  ✗ Assert failed: ${assertion.selector} (expected ${assertion.expected})` }); issues.push({ page: currentUrl, issue: `Assertion failed: ${assertion.selector}` }); }
+      }
+
+      // ── Add discovered routes ──
+      for (const route of (aiData.discoveredRoutes || [])) {
+        try {
+          const full = route.startsWith('http') ? route : new URL(route, currentUrl).href;
+          if (!visitedPages.has(full) && !discoveredSet.has(full)) {
+            queue.push(full);
+            discoveredSet.add(full);
+            send('ROUTE_FOUND', { url: full, from: currentUrl });
+            send('LOG', { level: 'info', msg: `  🔍 AI discovered route: ${full}` });
+          }
+        } catch (_) {}
+      }
+
+      // ── AI suggestions ──
+      for (const suggestion of (aiData.suggestions || [])) {
+        send('LOG', { level: 'info', msg: `  💡 Suggestion: ${suggestion}` });
+      }
+
+      send('PAGE_DONE', { url: currentUrl });
+      send('LOG', { level: 'success', msg: `  ✓ Page done (${(aiData.actions||[]).length} actions ran)\n` });
+    }
+
+    // ── Final report ──
+    const totalActions = passed + failed;
+    const coverage = totalActions > 0 ? Math.round((passed / totalActions) * 100) : 100;
+    const report = {
+      totalPages: discoveredSet.size,
+      testedPages: visitedPages.size,
+      totalActions,
+      passed,
+      failed,
+      assertPassed,
+      assertFailed,
+      coverage: `${coverage}%`,
+      visitedPages: [...visitedPages],
+      discoveredRoutes: [...discoveredSet],
+      issues,
+      screenshotCount: allScreenshots.length,
+    };
+
+    send('LOG', { level: 'success', msg: `\n✅ Testing complete — ${visitedPages.size} page(s), ${passed}/${totalActions} actions passed, ${coverage}% coverage` });
+    send('COMPLETE', report);
+
+  } catch (err) {
+    send('LOG', { level: 'error', msg: `Fatal error: ${err.message}` });
+    send('ERROR', { message: err.message });
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    res.end();
+  }
+});
+
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Playwright runner server listening on port ${PORT}`);
