@@ -1710,9 +1710,11 @@ function mkStep(action, label, extras = {}) {
   return { id: genStepId(), action, label, enabled: true, timeout: 30000, ...extras };
 }
 
+// extractPageDOM returns { selector, type, label, placeholder, name, ... }
+// label = ariaLabel || placeholder || name — use label as the display name
 function smartFieldValue(el) {
   const t = (el.type || '').toLowerCase();
-  const n = (el.name || el.placeholder || el.ariaLabel || '').toLowerCase();
+  const n = (el.name || el.placeholder || el.label || '').toLowerCase();
   if (t === 'email'  || n.includes('email'))                                 return 'test@example.com';
   if (t === 'password')                                                      return 'TestPass123!';
   if (n.includes('confirm') || n.includes('repeat') || n.includes('re-enter')) return 'TestPass123!';
@@ -1732,46 +1734,66 @@ function smartFieldValue(el) {
   if (n.includes('search') || n.includes('query') || n.includes('keyword')) return 'test query';
   if (n.includes('username') || n.includes('user'))                         return 'testuser123';
   if (n.includes('subject') || n.includes('title'))                         return 'Test Subject';
-  if (el.category === 'textarea')                                           return 'This is a test message for automated testing.';
+  if (t === 'textarea')                                                      return 'This is a test message for automated testing.';
   return 'Test Value';
 }
 
-function detectPageType(elements, pageTitle) {
-  const inputs   = elements.filter(e => e.category === 'input' || e.category === 'textarea');
-  const titleLow = (pageTitle || '').toLowerCase();
-  const allText  = elements.map(e => (e.text || '')).join(' ').toLowerCase();
+// extractPageDOM returns { inputs, selects, textareas, buttons, title }
+// Each input: { selector, type, label, placeholder, name, ... }
+// Each button: { selector, text, type }
+// Each select: { selector, label, options, name }
+// Each textarea: { selector, label, placeholder, name }
+// NOTE: checkboxes are inputs with type==='checkbox'|'radio'; links fetched separately
 
-  const passwordFields = inputs.filter(e => e.type === 'password');
-  const hasConfirmPwd  = inputs.some(e => {
-    const n = (e.name || e.placeholder || e.ariaLabel || '').toLowerCase();
+function elLabel(el) {
+  // unified label helper — works for both inputs (label field) and buttons (text field)
+  return el.label || el.placeholder || el.name || el.text || '';
+}
+
+function detectPageType(inputs, buttons, textareas, pageTitle) {
+  const titleLow  = (pageTitle || '').toLowerCase();
+  const allBtnTxt = (buttons || []).map(b => b.text || '').join(' ').toLowerCase();
+  const allInputs = [...(inputs || []), ...(textareas || [])];
+
+  const passwordFields = (inputs || []).filter(e => e.type === 'password');
+  const hasConfirmPwd  = allInputs.some(e => {
+    const n = (e.name || e.placeholder || e.label || '').toLowerCase();
     return n.includes('confirm') || n.includes('repeat') || n.includes('re-enter') || n.includes('verify');
   });
-  const searchFields = inputs.filter(e => {
-    const n = (e.name || e.placeholder || e.ariaLabel || '').toLowerCase();
+  const searchFields = (inputs || []).filter(e => {
+    const n = (e.name || e.placeholder || e.label || '').toLowerCase();
     return e.type === 'search' || n.includes('search') || n.includes('query') || n.includes('find');
   });
-  const hasContactFields = inputs.some(e => {
-    const n = (e.name || e.placeholder || e.ariaLabel || '').toLowerCase();
+  const hasContactFields = allInputs.some(e => {
+    const n = (e.name || e.placeholder || e.label || '').toLowerCase();
     return n.includes('message') || n.includes('subject') || n.includes('comment');
   });
-  const hasPriceIndicators = allText.match(/add to cart|buy now|checkout|add to bag|purchase/);
+  const hasPriceIndicators = allBtnTxt.match(/add to cart|buy now|checkout|add to bag|purchase/);
 
   if ((passwordFields.length > 0 && hasConfirmPwd) || titleLow.match(/register|sign.?up|create.?account/)) return 'signup';
   if (passwordFields.length > 0 || titleLow.match(/login|log.?in|sign.?in|password|authentication/))       return 'login';
   if (hasPriceIndicators || titleLow.match(/\bcart\b|\bshop\b|\bstore\b|\bproduct\b|\bcheckout\b/))        return 'ecommerce';
-  if (searchFields.length > 0 && inputs.length <= 3)                                                       return 'search';
-  if (hasContactFields && inputs.length > 0)                                                               return 'contact';
-  if (inputs.length === 0 && elements.filter(e => e.category === 'button').length > 2)                     return 'dashboard';
+  if (searchFields.length > 0 && allInputs.length <= 3)                                                    return 'search';
+  if (hasContactFields && allInputs.length > 0)                                                            return 'contact';
+  if (allInputs.length === 0 && (buttons || []).length > 2)                                                return 'dashboard';
   return 'general';
 }
 
 function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selects, checkboxes, links, textareas }) {
+  // Ensure all arrays are safe
+  inputs     = inputs     || [];
+  buttons    = buttons    || [];
+  selects    = selects    || [];
+  checkboxes = checkboxes || [];
+  links      = links      || [];
+  textareas  = textareas  || [];
+
   const steps = [];
 
-  // Always start: visit + wait + screenshot + assert
-  steps.push(mkStep('visit',      `Visit: ${url}`,                  { url, comment: `Open the ${pageType} page` }));
-  steps.push(mkStep('wait',       'Wait: Page ready',               { value: '1500', comment: 'Wait for full page load' }));
-  steps.push(mkStep('screenshot', 'Screenshot: Initial state',      { comment: 'Capture initial page state' }));
+  // Always start: visit + wait + screenshot + title assert
+  steps.push(mkStep('visit',      `Visit: ${url}`,             { url, comment: `Open the ${pageType} page` }));
+  steps.push(mkStep('wait',       'Wait: Page ready',          { value: '1500', comment: 'Wait for full page load' }));
+  steps.push(mkStep('screenshot', 'Screenshot: Initial state', { comment: 'Capture initial page state' }));
   if (pageTitle) {
     steps.push(mkStep('assert', `Assert: Page title "${pageTitle}"`, { assertType: 'title', assertExpected: pageTitle, comment: 'Verify correct page loaded' }));
   }
@@ -1779,27 +1801,27 @@ function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selec
   switch (pageType) {
 
     case 'login': {
-      const userField  = inputs.find(e => { const n=(e.name||e.placeholder||e.ariaLabel||'').toLowerCase(); return e.type==='email'||n.includes('email')||n.includes('user')||n.includes('login')||n.includes('identifier'); });
+      const userField  = inputs.find(e => { const n = (e.name||e.placeholder||e.label||'').toLowerCase(); return e.type==='email'||n.includes('email')||n.includes('user')||n.includes('login')||n.includes('identifier'); });
       const pwdField   = inputs.find(e => e.type === 'password');
       const submitBtn  = buttons.find(e => ['login','log in','sign in','submit','continue','enter'].some(kw => (e.text||'').toLowerCase().includes(kw)));
-      const rememberMe = checkboxes.find(e => (e.text||e.ariaLabel||'').toLowerCase().includes('remember'));
+      const rememberMe = checkboxes.find(e => (e.label||e.placeholder||'').toLowerCase().includes('remember'));
 
-      if (userField)   steps.push(mkStep('fill',  `Fill: ${userField.placeholder||userField.name||'Email/Username'}`, { selector: userField.selector, value: 'test@example.com', comment: 'Enter valid login credential' }));
-      if (pwdField)    steps.push(mkStep('fill',  'Fill: Password',                                                    { selector: pwdField.selector,  value: 'TestPass123!',     comment: 'Enter password' }));
-      if (rememberMe)  steps.push(mkStep('check', 'Check: Remember me',                                                { selector: rememberMe.selector, comment: 'Check remember me option' }));
+      if (userField)   steps.push(mkStep('fill',  `Fill: ${elLabel(userField)||'Email/Username'}`,  { selector: userField.selector,  value: 'test@example.com', comment: 'Enter valid login credential' }));
+      if (pwdField)    steps.push(mkStep('fill',  'Fill: Password',                                  { selector: pwdField.selector,   value: 'TestPass123!',     comment: 'Enter password' }));
+      if (rememberMe)  steps.push(mkStep('check', 'Check: Remember me',                              { selector: rememberMe.selector, comment: 'Check remember me option' }));
       steps.push(mkStep('screenshot', 'Screenshot: Before submit', { comment: 'Capture filled form' }));
-      if (submitBtn)   steps.push(mkStep('click', `Click: ${submitBtn.text||'Login button'}`,                          { selector: submitBtn.selector, comment: 'Submit login form' }));
-      else             steps.push(mkStep('press', 'Press: Enter to submit',                                            { key: 'Enter', pressTarget: 'keyboard', comment: 'Submit with Enter key' }));
-      steps.push(mkStep('wait',       'Wait: 2s for auth response',    { value: '2000', comment: 'Wait for authentication' }));
-      steps.push(mkStep('screenshot', 'Screenshot: After login',        { comment: 'Capture post-login state' }));
+      if (submitBtn)   steps.push(mkStep('click', `Click: ${submitBtn.text||'Login button'}`,        { selector: submitBtn.selector,  comment: 'Submit login form' }));
+      else             steps.push(mkStep('press', 'Press: Enter to submit',                          { key: 'Enter', pressTarget: 'keyboard', comment: 'Submit with Enter key' }));
+      steps.push(mkStep('wait',       'Wait: 2s for auth response', { value: '2000', comment: 'Wait for authentication' }));
+      steps.push(mkStep('screenshot', 'Screenshot: After login',    { comment: 'Capture post-login state' }));
 
       // Empty field test
       steps.push(mkStep('visit', `Visit: ${url}`, { url, comment: 'Re-visit for empty field validation test' }));
-      if (submitBtn)   steps.push(mkStep('click', `Click: ${submitBtn.text||'Submit'} (empty fields)`, { selector: submitBtn.selector, comment: 'Submit empty — expect validation errors' }));
-      else             steps.push(mkStep('press', 'Press: Enter (empty)', { key: 'Enter', pressTarget: 'keyboard' }));
-      steps.push(mkStep('screenshot', 'Screenshot: Empty field validation', { comment: 'Verify validation error messages shown' }));
+      if (submitBtn)   steps.push(mkStep('click', `Click: ${submitBtn.text||'Submit'} (empty)`, { selector: submitBtn.selector, comment: 'Submit empty — expect validation errors' }));
+      else             steps.push(mkStep('press', 'Press: Enter (empty form)', { key: 'Enter', pressTarget: 'keyboard' }));
+      steps.push(mkStep('screenshot', 'Screenshot: Empty field validation', { comment: 'Verify validation errors shown' }));
 
-      // Invalid credentials test
+      // Wrong credentials test
       steps.push(mkStep('visit', `Visit: ${url}`, { url, comment: 'Re-visit for wrong-credentials test' }));
       if (userField)   steps.push(mkStep('fill', 'Fill: Wrong email',    { selector: userField.selector, value: 'wrong@example.com', comment: 'Enter invalid credential' }));
       if (pwdField)    steps.push(mkStep('fill', 'Fill: Wrong password', { selector: pwdField.selector,  value: 'WrongPass999!',      comment: 'Enter wrong password' }));
@@ -1811,67 +1833,66 @@ function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selec
 
     case 'signup': {
       const pwdFields  = inputs.filter(e => e.type === 'password');
-      const emailField = inputs.find(e => e.type==='email' || (e.name||e.placeholder||'').toLowerCase().includes('email'));
-      const nameField  = inputs.find(e => { const n=(e.name||e.placeholder||e.ariaLabel||'').toLowerCase(); return n.includes('name') && !n.includes('user') && e.type!=='password'; });
+      const emailField = inputs.find(e => e.type==='email' || (e.name||e.placeholder||e.label||'').toLowerCase().includes('email'));
+      const nameField  = inputs.find(e => { const n=(e.name||e.placeholder||e.label||'').toLowerCase(); return n.includes('name') && !n.includes('user') && e.type!=='password'; });
       const submitBtn  = buttons.find(e => ['register','sign up','signup','create','join','submit'].some(kw => (e.text||'').toLowerCase().includes(kw)));
-      const terms      = checkboxes.find(e => (e.text||e.ariaLabel||'').toLowerCase().match(/term|agree|consent/));
+      const terms      = checkboxes.find(e => (e.label||e.placeholder||'').toLowerCase().match(/term|agree|consent/));
 
-      if (nameField)   steps.push(mkStep('fill', `Fill: ${nameField.placeholder||nameField.name||'Full Name'}`, { selector: nameField.selector, value: 'John Doe', comment: 'Enter full name' }));
-      inputs.filter(e => e !== nameField && e !== emailField && e.type !== 'password').forEach(e => {
-        steps.push(mkStep('fill', `Fill: ${e.placeholder||e.name||e.ariaLabel||'Field'}`, { selector: e.selector, value: smartFieldValue(e), comment: `Fill field: ${e.name||e.placeholder||'input'}` }));
+      if (nameField)    steps.push(mkStep('fill', `Fill: ${elLabel(nameField)||'Full Name'}`, { selector: nameField.selector, value: 'John Doe', comment: 'Enter full name' }));
+      inputs.filter(e => e !== nameField && e !== emailField && e.type !== 'password' && e.type !== 'checkbox' && e.type !== 'radio').forEach(e => {
+        steps.push(mkStep('fill', `Fill: ${elLabel(e)||'Field'}`, { selector: e.selector, value: smartFieldValue(e), comment: `Fill: ${e.name||e.placeholder||'field'}` }));
       });
-      if (emailField)  steps.push(mkStep('fill', `Fill: ${emailField.placeholder||'Email'}`, { selector: emailField.selector, value: 'newuser@example.com', comment: 'Enter email address' }));
+      if (emailField)   steps.push(mkStep('fill', `Fill: ${elLabel(emailField)||'Email'}`, { selector: emailField.selector, value: 'newuser@example.com', comment: 'Enter email address' }));
       if (pwdFields[0]) steps.push(mkStep('fill', 'Fill: Password',         { selector: pwdFields[0].selector, value: 'SecurePass123!', comment: 'Enter password' }));
       if (pwdFields[1]) steps.push(mkStep('fill', 'Fill: Confirm Password', { selector: pwdFields[1].selector, value: 'SecurePass123!', comment: 'Confirm password matches' }));
-      selects.forEach(e => steps.push(mkStep('select', `Select: ${e.name||e.ariaLabel||'Dropdown'}`, { selector: e.selector, value: '', comment: 'Select option from dropdown' })));
-      if (terms)       steps.push(mkStep('check', 'Check: Terms & Conditions', { selector: terms.selector, comment: 'Accept terms and conditions' }));
+      selects.forEach(e  => steps.push(mkStep('select', `Select: ${elLabel(e)||'Dropdown'}`, { selector: e.selector, value: '', comment: 'Select from dropdown' })));
+      if (terms)        steps.push(mkStep('check', 'Check: Terms & Conditions', { selector: terms.selector, comment: 'Accept terms' }));
       steps.push(mkStep('screenshot', 'Screenshot: Before register', {}));
-      if (submitBtn)   steps.push(mkStep('click', `Click: ${submitBtn.text||'Register'}`, { selector: submitBtn.selector, comment: 'Submit registration form' }));
-      steps.push(mkStep('wait', 'Wait: 2s', { value: '2000' }));
-      steps.push(mkStep('screenshot', 'Screenshot: After signup', { comment: 'Verify success / redirect' }));
+      if (submitBtn)    steps.push(mkStep('click', `Click: ${submitBtn.text||'Register'}`, { selector: submitBtn.selector, comment: 'Submit registration' }));
+      steps.push(mkStep('wait',       'Wait: 2s', { value: '2000' }));
+      steps.push(mkStep('screenshot', 'Screenshot: After signup', { comment: 'Verify success/redirect' }));
       break;
     }
 
     case 'search': {
-      const searchField = inputs.find(e => e.type==='search' || (e.name||e.placeholder||e.ariaLabel||'').toLowerCase().match(/search|find|query|keyword/));
-      const searchBtn   = buttons.find(e => (e.text||e.ariaLabel||'').toLowerCase().match(/search|find|^go$|submit/));
+      const searchField = inputs.find(e => e.type==='search' || (e.name||e.placeholder||e.label||'').toLowerCase().match(/search|find|query|keyword/));
+      const searchBtn   = buttons.find(e => (e.text||'').toLowerCase().match(/search|find|^go$|submit/));
       if (searchField) {
-        steps.push(mkStep('fill', `Fill: "${smartFieldValue(searchField)}" in search box`, { selector: searchField.selector, value: smartFieldValue(searchField), comment: 'Enter search query' }));
-        if (searchBtn) steps.push(mkStep('click', `Click: ${searchBtn.text||'Search'}`,   { selector: searchBtn.selector, comment: 'Execute search' }));
-        else           steps.push(mkStep('press', 'Press: Enter to search',                { key: 'Enter', pressTarget: 'keyboard', comment: 'Submit search with Enter' }));
-        steps.push(mkStep('wait',       'Wait: 2s for results', { value: '2000', comment: 'Wait for search results to load' }));
-        steps.push(mkStep('screenshot', 'Screenshot: Search results', { comment: 'Verify results are displayed' }));
-        // Empty search
+        steps.push(mkStep('fill', `Fill: "${smartFieldValue(searchField)}" in search`, { selector: searchField.selector, value: smartFieldValue(searchField), comment: 'Enter search query' }));
+        if (searchBtn)  steps.push(mkStep('click', `Click: ${searchBtn.text||'Search'}`, { selector: searchBtn.selector, comment: 'Submit search' }));
+        else            steps.push(mkStep('press', 'Press: Enter to search', { key: 'Enter', pressTarget: 'keyboard', comment: 'Submit with Enter' }));
+        steps.push(mkStep('wait',       'Wait: 2s for results', { value: '2000', comment: 'Wait for results' }));
+        steps.push(mkStep('screenshot', 'Screenshot: Search results', { comment: 'Verify results displayed' }));
         steps.push(mkStep('visit', `Visit: ${url}`, { url, comment: 'Re-visit for empty search test' }));
-        steps.push(mkStep('fill',  'Fill: (empty search field)', { selector: searchField.selector, value: '', comment: 'Clear search input' }));
-        if (searchBtn) steps.push(mkStep('click', `Click: ${searchBtn.text||'Search'} (empty)`, { selector: searchBtn.selector }));
-        steps.push(mkStep('screenshot', 'Screenshot: Empty search behaviour', {}));
+        steps.push(mkStep('fill',  'Fill: (empty search)', { selector: searchField.selector, value: '', comment: 'Clear search field' }));
+        if (searchBtn)  steps.push(mkStep('click', `Click: ${searchBtn.text||'Search'} (empty)`, { selector: searchBtn.selector }));
+        steps.push(mkStep('screenshot', 'Screenshot: Empty search', {}));
       }
       break;
     }
 
     case 'contact': {
-      [...inputs, ...textareas].slice(0, 12).forEach(e => {
-        steps.push(mkStep('fill', `Fill: ${e.placeholder||e.name||e.ariaLabel||'Field'}`, { selector: e.selector, value: smartFieldValue(e), comment: `Fill: ${e.name||e.placeholder||'field'}` }));
+      [...inputs.filter(e => e.type !== 'checkbox' && e.type !== 'radio'), ...textareas].slice(0, 12).forEach(e => {
+        steps.push(mkStep('fill', `Fill: ${elLabel(e)||'Field'}`, { selector: e.selector, value: smartFieldValue(e), comment: `Fill: ${e.name||e.placeholder||'field'}` }));
       });
-      selects.forEach(e   => steps.push(mkStep('select', `Select: ${e.name||e.ariaLabel||'Dropdown'}`,   { selector: e.selector, value: '', comment: 'Select an option' })));
-      checkboxes.forEach(e => steps.push(mkStep('check', `Check: ${e.text||e.ariaLabel||'Checkbox'}`,    { selector: e.selector, comment: 'Check checkbox' })));
+      selects.forEach(e    => steps.push(mkStep('select', `Select: ${elLabel(e)||'Dropdown'}`, { selector: e.selector, value: '', comment: 'Select option' })));
+      checkboxes.forEach(e => steps.push(mkStep('check',  `Check: ${elLabel(e)||'Checkbox'}`,  { selector: e.selector, comment: 'Check checkbox' })));
       steps.push(mkStep('screenshot', 'Screenshot: Form filled', {}));
       const submitBtn = buttons.find(e => ['send','submit','contact','message','post'].some(kw => (e.text||'').toLowerCase().includes(kw))) || buttons[0];
       if (submitBtn) steps.push(mkStep('click', `Click: ${submitBtn.text||'Submit'}`, { selector: submitBtn.selector, comment: 'Submit contact form' }));
-      steps.push(mkStep('wait',       'Wait: 2s after submit', { value: '2000' }));
-      steps.push(mkStep('screenshot', 'Screenshot: After submit', { comment: 'Verify success / confirmation message' }));
+      steps.push(mkStep('wait',       'Wait: 2s', { value: '2000' }));
+      steps.push(mkStep('screenshot', 'Screenshot: After submit', { comment: 'Verify confirmation message' }));
       break;
     }
 
     case 'ecommerce': {
-      steps.push(mkStep('scroll', 'Scroll: Browse products', { scrollType: 'page', scrollY: 400, comment: 'Scroll to view products' }));
+      steps.push(mkStep('scroll', 'Scroll: Browse products', { scrollType: 'page', scrollY: 400, comment: 'Scroll to see products' }));
       steps.push(mkStep('screenshot', 'Screenshot: Products visible', {}));
       const cartBtn     = buttons.find(e => ['add to cart','add to bag','buy now','purchase'].some(kw => (e.text||'').toLowerCase().includes(kw)));
       const checkoutBtn = buttons.find(e => (e.text||'').toLowerCase().includes('checkout'));
       if (cartBtn) {
         steps.push(mkStep('click', `Click: ${cartBtn.text||'Add to Cart'}`, { selector: cartBtn.selector, comment: 'Add product to cart' }));
-        steps.push(mkStep('wait', 'Wait: 1s', { value: '1000' }));
+        steps.push(mkStep('wait',       'Wait: 1s', { value: '1000' }));
         steps.push(mkStep('screenshot', 'Screenshot: After add-to-cart', {}));
       }
       if (checkoutBtn) {
@@ -1883,11 +1904,10 @@ function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selec
     }
 
     case 'dashboard': {
-      steps.push(mkStep('scroll', 'Scroll: Browse dashboard', { scrollType: 'page', scrollY: 400, comment: 'Scroll to see full dashboard' }));
+      steps.push(mkStep('scroll', 'Scroll: Browse dashboard', { scrollType: 'page', scrollY: 400, comment: 'Scroll dashboard' }));
       steps.push(mkStep('screenshot', 'Screenshot: Dashboard content', {}));
-      const clickableLinks = links.filter(l => l.text && l.text.length < 50 && !l.href?.startsWith('mailto') && !l.href?.startsWith('javascript')).slice(0, 3);
-      clickableLinks.forEach(l => {
-        steps.push(mkStep('click',      `Click: ${l.text}`,              { selector: l.selector, comment: `Navigate to: ${l.text}` }));
+      links.filter(l => l.text && l.text.length < 50).slice(0, 3).forEach(l => {
+        steps.push(mkStep('click',      `Click: ${l.text}`,              { selector: l.selector, comment: `Navigate: ${l.text}` }));
         steps.push(mkStep('wait',       'Wait: 1.5s',                    { value: '1500' }));
         steps.push(mkStep('screenshot', `Screenshot: ${l.text} section`, {}));
         steps.push(mkStep('goback',     'Go Back',                       { comment: 'Return to dashboard' }));
@@ -1897,27 +1917,25 @@ function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selec
     }
 
     default: { // general
-      [...inputs, ...textareas].slice(0, 10).forEach(e => {
-        steps.push(mkStep('fill', `Fill: ${e.placeholder||e.name||e.ariaLabel||'Input'}`, { selector: e.selector, value: smartFieldValue(e), comment: 'Fill input field' }));
+      [...inputs.filter(e => e.type !== 'checkbox' && e.type !== 'radio'), ...textareas].slice(0, 10).forEach(e => {
+        steps.push(mkStep('fill', `Fill: ${elLabel(e)||'Input'}`, { selector: e.selector, value: smartFieldValue(e), comment: 'Fill input' }));
       });
-      selects.slice(0, 5).forEach(e    => steps.push(mkStep('select', `Select: ${e.name||e.ariaLabel||'Dropdown'}`, { selector: e.selector, value: '', comment: 'Select an option' })));
-      checkboxes.slice(0, 3).forEach(e => steps.push(mkStep('check',  `Check: ${e.text||e.ariaLabel||'Checkbox'}`,  { selector: e.selector, comment: 'Check checkbox' })));
+      selects.slice(0, 5).forEach(e    => steps.push(mkStep('select', `Select: ${elLabel(e)||'Dropdown'}`, { selector: e.selector, value: '', comment: 'Select option' })));
+      checkboxes.slice(0, 3).forEach(e => steps.push(mkStep('check',  `Check: ${elLabel(e)||'Checkbox'}`,  { selector: e.selector, comment: 'Check checkbox' })));
       if (inputs.length > 0 || textareas.length > 0) steps.push(mkStep('screenshot', 'Screenshot: Form filled', {}));
-      const primaryBtns = buttons.filter(b => ['submit','send','save','apply','confirm','continue','next','subscribe','register','search','get started','learn more'].some(kw => (b.text||'').toLowerCase().includes(kw)));
-      const targetBtn   = primaryBtns[0] || buttons[0];
-      if (targetBtn) {
-        steps.push(mkStep('click', `Click: ${targetBtn.text||'Button'}`, { selector: targetBtn.selector, comment: 'Click primary action button' }));
-        steps.push(mkStep('wait',       'Wait: 2s after action', { value: '2000' }));
-        steps.push(mkStep('screenshot', 'Screenshot: After action',    {}));
+      const primaryBtn = buttons.find(b => ['submit','send','save','apply','confirm','continue','next','subscribe','get started','learn more','search'].some(kw => (b.text||'').toLowerCase().includes(kw))) || buttons[0];
+      if (primaryBtn) {
+        steps.push(mkStep('click', `Click: ${primaryBtn.text||'Button'}`, { selector: primaryBtn.selector, comment: 'Click primary action' }));
+        steps.push(mkStep('wait',       'Wait: 2s', { value: '2000' }));
+        steps.push(mkStep('screenshot', 'Screenshot: After action', {}));
       }
-      steps.push(mkStep('scroll', 'Scroll: Page down', { scrollType: 'page', scrollY: 500, comment: 'Scroll to see more content' }));
+      steps.push(mkStep('scroll', 'Scroll: Page down', { scrollType: 'page', scrollY: 500, comment: 'Scroll to see more' }));
       steps.push(mkStep('screenshot', 'Screenshot: Scrolled view', {}));
-      const navLinks = links.filter(l => l.text && l.text.length < 40 && l.href && !l.href.startsWith('javascript') && !l.href.startsWith('mailto') && !l.href.startsWith('#')).slice(0, 2);
-      navLinks.forEach(l => {
-        steps.push(mkStep('click',      `Click: ${l.text}`,              { selector: l.selector, comment: `Navigate: ${l.text}` }));
-        steps.push(mkStep('wait',       'Wait: 1.5s',                    { value: '1500' }));
-        steps.push(mkStep('screenshot', `Screenshot: ${l.text} page`,    {}));
-        steps.push(mkStep('goback',     'Go Back',                       {}));
+      links.filter(l => l.text && l.text.length < 40).slice(0, 2).forEach(l => {
+        steps.push(mkStep('click',      `Click: ${l.text}`,           { selector: l.selector, comment: `Navigate: ${l.text}` }));
+        steps.push(mkStep('wait',       'Wait: 1.5s',                 { value: '1500' }));
+        steps.push(mkStep('screenshot', `Screenshot: ${l.text} page`, {}));
+        steps.push(mkStep('goback',     'Go Back',                    {}));
       });
       break;
     }
@@ -1927,7 +1945,7 @@ function generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selec
   return steps;
 }
 
-// POST /api/generate-script  — analyze URL, detect page type, generate TestStep[]
+// POST /api/generate-script  — visit URL, detect page type, stream TestStep[] via SSE
 app.post('/api/generate-script', async (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.status(400).json({ error: 'url is required' });
@@ -1969,40 +1987,71 @@ app.post('/api/generate-script', async (req, res) => {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
 
-    // Screenshot #1 — initial page
+    // Screenshot #1
     const shot1 = await page.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
     if (shot1) send('SCREENSHOT', { frameBase64: shot1.toString('base64') });
 
     send('PROGRESS', { message: '🔍 Extracting DOM elements…' });
 
-    // Use the existing 4-strategy cascade
-    let elements = await extractPageDOM(page);
-    if (!elements || elements.length === 0) elements = await extractPageDOMFallback(page);
+    // extractPageDOM returns { inputs, selects, textareas, buttons, title, url }
+    let domResult = await extractPageDOM(page);
+    if (!domResult || (!domResult.inputs?.length && !domResult.buttons?.length)) {
+      domResult = await extractPageDOMFallback(page);
+    }
 
-    const pageTitle = await page.title().catch(() => '');
+    // Safe-destructure (both helpers return same shape)
+    const inputs    = Array.isArray(domResult?.inputs)    ? domResult.inputs    : [];
+    const selects   = Array.isArray(domResult?.selects)   ? domResult.selects   : [];
+    const textareas = Array.isArray(domResult?.textareas) ? domResult.textareas : [];
+    const buttons   = Array.isArray(domResult?.buttons)   ? domResult.buttons   : [];
+    const pageTitle = domResult?.title || await page.title().catch(() => '');
 
-    send('PROGRESS', { message: `📊 Found ${elements.length} elements — analyzing page structure…` });
+    // Separate checkboxes/radios from regular inputs
+    const checkboxes   = inputs.filter(e => e.type === 'checkbox' || e.type === 'radio');
+    const regularInputs = inputs.filter(e => e.type !== 'checkbox' && e.type !== 'radio');
 
-    const inputs    = elements.filter(e => e.category === 'input');
-    const textareas = elements.filter(e => e.category === 'textarea');
-    const buttons   = elements.filter(e => e.category === 'button');
-    const selects   = elements.filter(e => e.category === 'select');
-    const checkboxes= elements.filter(e => e.category === 'checkbox' || e.category === 'radio');
-    const links     = elements.filter(e => e.category === 'link');
+    // Grab top navigation links separately (not returned by extractPageDOM)
+    const links = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('a[href]'))
+        .filter(a => {
+          const s = window.getComputedStyle(a);
+          return s.display !== 'none' && s.visibility !== 'hidden';
+        })
+        .map(a => {
+          const text = (a.textContent || a.getAttribute('aria-label') || '').trim().replace(/\s+/g,' ').slice(0, 60);
+          const href = a.getAttribute('href') || '';
+          const id   = a.id;
+          const al   = a.getAttribute('aria-label');
+          const selector = id ? `#${id}` : al ? `[aria-label="${al}"]` : text ? `text="${text.slice(0,40)}"` : 'a';
+          return { selector, text, href };
+        })
+        .filter(l => l.text && l.href && !l.href.startsWith('javascript') && !l.href.startsWith('mailto') && !l.href.startsWith('#'))
+        .slice(0, 10);
+    }).catch(() => []);
 
-    const pageType  = detectPageType(elements, pageTitle);
+    const totalCount = inputs.length + buttons.length + selects.length + textareas.length;
+    send('PROGRESS', { message: `📊 Found ${totalCount} elements — analyzing page…` });
+
+    const pageType = detectPageType(regularInputs, buttons, textareas, pageTitle);
 
     send('PAGE_INFO', {
       pageType,
       pageTitle,
-      elementCounts: { inputs: inputs.length + textareas.length, buttons: buttons.length, selects: selects.length, links: links.length },
+      elementCounts: {
+        inputs:  regularInputs.length + textareas.length,
+        buttons: buttons.length,
+        selects: selects.length,
+        links:   links.length,
+      },
+    });
+    send('PROGRESS', { message: `📋 Page type: "${pageType}" — generating steps…` });
+
+    const steps = generateStepsForPage({
+      pageType, url, pageTitle,
+      inputs: regularInputs, buttons, selects, checkboxes, links, textareas,
     });
 
-    send('PROGRESS', { message: `📋 Detected: "${pageType}" — generating test steps…` });
-
-    const steps = generateStepsForPage({ pageType, url, pageTitle, inputs, buttons, selects, checkboxes, links, textareas });
-
-    // Stream steps one by one for live animation
+    // Stream steps one-by-one for live animation
     for (const step of steps) {
       send('STEP_ADDED', { step });
       await page.waitForTimeout(80);
@@ -2012,7 +2061,7 @@ app.post('/api/generate-script', async (req, res) => {
     const shot2 = await page.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
     if (shot2) send('SCREENSHOT', { frameBase64: shot2.toString('base64') });
 
-    send('COMPLETE', { steps, pageType, pageTitle, elementCounts: { inputs: inputs.length, buttons: buttons.length } });
+    send('COMPLETE', { steps, pageType, pageTitle, elementCounts: { inputs: regularInputs.length, buttons: buttons.length } });
 
   } catch (err) {
     send('ERROR', { message: err.message || String(err) });
