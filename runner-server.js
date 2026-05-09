@@ -1008,22 +1008,122 @@ async function extractDOMForAI(page) {
         href:        el.getAttribute('href') || '',
         ariaLabel:   el.getAttribute('aria-label') || '',
         dataTestId:  el.getAttribute('data-testid') || '',
-        selector:    el.id ? `#${el.id}` : el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : el.getAttribute('data-testid') ? `[data-testid="${el.getAttribute('data-testid')}"]` : null,
+        selector:    el.id
+          ? `#${el.id}`
+          : el.getAttribute('name')
+            ? `[name="${el.getAttribute('name')}"]`
+            : el.getAttribute('data-testid')
+              ? `[data-testid="${el.getAttribute('data-testid')}"]`
+              : null,
       }));
     });
   } catch (_) { return []; }
 }
 
+// Harvest all same-origin links from the page automatically
+async function harvestLinks(page, baseUrl) {
+  try {
+    const origin = new URL(baseUrl).origin;
+    return await page.evaluate((origin) => {
+      const links = [...document.querySelectorAll('a[href]')];
+      const results = new Set();
+      for (const a of links) {
+        try {
+          const url = new URL(a.href, window.location.href);
+          // Same origin only, skip anchors/external/files
+          if (url.origin === origin
+            && !url.pathname.match(/\.(pdf|zip|png|jpg|jpeg|gif|svg|ico|css|js|woff|ttf)$/i)
+            && url.href !== window.location.href
+          ) {
+            // Normalise: strip hash fragments
+            url.hash = '';
+            results.add(url.href);
+          }
+        } catch (_) {}
+      }
+      return [...results].slice(0, 30); // cap at 30 links per page
+    }, origin);
+  } catch (_) { return []; }
+}
+
+// Smart test-data values for fallback actions
+function smartValue(el) {
+  const hint = `${el.type} ${el.name} ${el.id} ${el.placeholder} ${el.ariaLabel}`.toLowerCase();
+  if (/email/.test(hint))    return 'test@example.com';
+  if (/phone|tel/.test(hint)) return '+1-555-555-5555';
+  if (/pass/.test(hint))     return 'TestPass@123';
+  if (/user|name|login/.test(hint)) return 'testuser';
+  if (/search|query/.test(hint))    return 'test query';
+  if (/url|website/.test(hint))     return 'https://example.com';
+  if (/date/.test(hint))    return '2024-01-01';
+  if (/number|qty|amount/.test(hint)) return '42';
+  if (/zip|postal/.test(hint))  return '10001';
+  if (/city/.test(hint))    return 'New York';
+  if (/country/.test(hint)) return 'US';
+  if (/message|comment|note/.test(hint)) return 'This is an automated test message.';
+  if (el.type === 'number')  return '1';
+  if (el.type === 'checkbox') return null; // handled separately
+  return 'test';
+}
+
+// Generate fallback actions from DOM when AI returns nothing
+function generateFallbackActions(dom) {
+  const actions = [];
+  const inputs    = dom.filter(e => ['input', 'textarea'].includes(e.tag) && e.type !== 'hidden' && e.type !== 'submit');
+  const buttons   = dom.filter(e => (e.tag === 'button' || e.type === 'submit') && e.text.length < 80);
+  const checkboxes = dom.filter(e => e.type === 'checkbox');
+
+  // Fill all visible inputs first
+  for (const el of inputs.slice(0, 8)) {
+    const sel = el.selector || (el.id ? `#${el.id}` : el.placeholder ? `[placeholder="${el.placeholder}"]` : null);
+    if (!sel) continue;
+    if (el.type === 'checkbox') {
+      actions.push({ tool: 'check', selector: sel, _fallback: true });
+    } else {
+      const val = smartValue(el);
+      if (val) actions.push({ tool: 'fill', selector: sel, text: val, _fallback: true });
+    }
+  }
+
+  // Click first submit / primary button
+  const submitBtn = buttons.find(b => /submit|login|sign|send|next|save|continue|go|search/i.test(b.text + b.type));
+  if (submitBtn) {
+    const sel = submitBtn.selector || (submitBtn.text ? `button:has-text("${submitBtn.text.slice(0,40)}")` : null);
+    if (sel) actions.push({ tool: 'click', selector: sel, _fallback: true });
+  } else if (buttons.length > 0) {
+    // click first button
+    const b = buttons[0];
+    const sel = b.selector || (b.text ? `button:has-text("${b.text.slice(0,40)}")` : null);
+    if (sel) actions.push({ tool: 'click', selector: sel, _fallback: true });
+  }
+
+  return actions;
+}
+
+// Build a Playwright selector from a DOM element
+function bestSelector(el) {
+  if (el.id) return `#${el.id}`;
+  if (el.dataTestId) return `[data-testid="${el.dataTestId}"]`;
+  if (el.name) return `[name="${el.name}"]`;
+  if (el.ariaLabel) return `[aria-label="${el.ariaLabel}"]`;
+  if (el.placeholder) return `[placeholder="${el.placeholder}"]`;
+  if (el.text) {
+    if (el.tag === 'a') return `a:has-text("${el.text.slice(0, 40).replace(/"/g, '\\"')}")`;
+    if (el.tag === 'button') return `button:has-text("${el.text.slice(0, 40).replace(/"/g, '\\"')}")`;
+  }
+  return null;
+}
+
 async function executeAIAction(page, action, credentials) {
   const timeout = 12000;
   const tool = action.tool || action.type || '';
-  const sel  = action.selector || '';
+  let sel  = action.selector || '';
 
-  // Auto-fill credentials if action references them by placeholder patterns
+  // Auto-fill credentials when the AI targets auth fields
   let text = action.text || action.value || '';
   if (credentials) {
-    if (/email|username|user|login/i.test(sel + action.placeholder + '') && !text) text = credentials.username;
-    if (/password|pass|pwd/i.test(sel + action.placeholder + '') && !text) text = credentials.password;
+    if (/email|username|user|login/i.test(sel + (action.placeholder || '')) && !text) text = credentials.username;
+    if (/password|pass|pwd/i.test(sel + (action.placeholder || ''))           && !text) text = credentials.password;
   }
 
   switch (tool) {
@@ -1061,7 +1161,6 @@ async function executeAIAction(page, action, credentials) {
       if (sel) await page.locator(sel).first().click({ timeout });
   }
 
-  // Wait for any navigation or network to settle
   await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
 }
 
@@ -1078,9 +1177,7 @@ async function runAssertion(page, assertion) {
       if (!text.includes(expected)) throw new Error(`Expected "${expected}" but got "${text}"`);
     }
     return true;
-  } catch (err) {
-    return false;
-  }
+  } catch (_) { return false; }
 }
 
 app.post('/api/ai-test/run', async (req, res) => {
@@ -1106,130 +1203,170 @@ app.post('/api/ai-test/run', async (req, res) => {
     try { res.write(`data: ${JSON.stringify({ type, payload })}\n\n`); } catch (_) {}
   };
 
-  // ── Session state ──
-  const visitedPages   = new Set();
-  const queue          = [startUrl];
-  const testedComponents = {};
+  const visitedPages  = new Set();
+  const queue         = [startUrl];
+  const discoveredSet = new Set([startUrl]);
   const allScreenshots = [];
-  const issues         = [];
-  const discoveredSet  = new Set([startUrl]);
-  let passed = 0, failed = 0, assertPassed = 0, assertFailed = 0;
-  let stepCount = 0;
+  const issues        = [];
+  const pageActions   = []; // per-page action log for code generation
+  let passed = 0, failed = 0, assertPassed = 0, assertFailed = 0, stepCount = 0;
   let browser;
 
   try {
     send('LOG', { level: 'info', msg: '▶  Launching Chromium…' });
 
-    const launchOptions = {
+    const launchOpts = {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     };
-    if (CHROMIUM_PATH) launchOptions.executablePath = CHROMIUM_PATH;
+    if (CHROMIUM_PATH) launchOpts.executablePath = CHROMIUM_PATH;
 
-    browser = await chromium.launch(launchOptions);
+    browser = await chromium.launch(launchOpts);
     const context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
     });
     const page = await context.newPage();
-    send('LOG', { level: 'success', msg: 'Browser launched' });
+    send('LOG', { level: 'success', msg: 'Browser launched ✓' });
 
-    // ── Main autonomous loop ──
+    // ── MAIN AUTONOMOUS LOOP ──────────────────────────────────────────────────
     while (queue.length > 0 && visitedPages.size < maxPages && stepCount < maxSteps) {
       const currentUrl = queue.shift();
       if (visitedPages.has(currentUrl)) continue;
       visitedPages.add(currentUrl);
 
       send('PAGE_START', { url: currentUrl, queueSize: queue.length, visited: visitedPages.size });
-      send('LOG', { level: 'step', msg: `📄 Testing page: ${currentUrl}` });
+      send('LOG', { level: 'step', msg: `\n📄 [${visitedPages.size}/${maxPages}] Testing: ${currentUrl}` });
 
-      // Navigate
+      // ── 1. Navigate ──
       try {
         await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(600);
       } catch (e) {
-        send('LOG', { level: 'error', msg: `Navigation failed: ${e.message.split('\n')[0]}` });
-        issues.push({ page: currentUrl, issue: `Navigation failed: ${e.message.split('\n')[0]}` });
+        const msg = e.message.split('\n')[0];
+        send('LOG', { level: 'error', msg: `  ✗ Navigation failed: ${msg}` });
+        issues.push({ page: currentUrl, issue: `Navigation failed: ${msg}` });
         continue;
       }
 
       const pageTitle = await page.title().catch(() => '');
-      send('LOG', { level: 'info', msg: `  Title: "${pageTitle}" — extracting DOM…` });
+      const liveUrl   = page.url();
+      send('LOG', { level: 'info', msg: `  Title: "${pageTitle}"` });
 
-      // Screenshot of initial page state
+      // ── 2. Initial screenshot ──
       const initShot = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => null);
       if (initShot) {
-        const s = { data: initShot.toString('base64'), url: page.url(), label: 'Page loaded', passed: true };
+        const s = { data: initShot.toString('base64'), url: liveUrl, label: `${pageTitle || liveUrl} — loaded`, passed: true };
         allScreenshots.push(s);
         send('SCREENSHOT', s);
       }
 
-      // Extract DOM
+      // ── 3. Extract DOM ──
       const dom = await extractDOMForAI(page);
-      send('DOM_EXTRACTED', { url: page.url(), count: dom.length });
+      send('DOM_EXTRACTED', { url: liveUrl, count: dom.length });
       send('LOG', { level: 'info', msg: `  Extracted ${dom.length} interactive elements` });
 
-      // Build AI payload
+      // ── 4. AUTO-HARVEST links (independent of AI) ──────────────────────────
+      const harvestedLinks = await harvestLinks(page, startUrl);
+      let newLinkCount = 0;
+      for (const link of harvestedLinks) {
+        if (!visitedPages.has(link) && !discoveredSet.has(link)) {
+          queue.push(link);
+          discoveredSet.add(link);
+          newLinkCount++;
+          send('ROUTE_FOUND', { url: link, from: liveUrl });
+        }
+      }
+      if (newLinkCount > 0) {
+        send('LOG', { level: 'info', msg: `  🔗 Auto-harvested ${newLinkCount} new link(s) → queue now ${queue.length}` });
+      }
+
+      // ── 5. Ask AI ─────────────────────────────────────────────────────────
       const aiPayload = {
         goal,
-        currentUrl: page.url(),
+        currentUrl: liveUrl,
         pageTitle,
         visitedPages: [...visitedPages],
         queue: [...queue].slice(0, 10),
-        dom,
+        dom: dom.slice(0, 50),
         credentials: credentials ? { username: credentials.username, hasPassword: !!credentials.password } : null,
+        instructions: 'Return a JSON object with keys: actions (array), assertions (array), discoveredRoutes (array of URL strings), errors (array), suggestions (array). Each action must have: tool (fill|click|navigate|scroll|check|select|hover), selector, and optionally text/url. Selectors must be valid CSS or Playwright selectors.',
       };
 
-      send('AI_THINKING', { url: page.url() });
-      send('LOG', { level: 'info', msg: '  🤖 Asking AI to analyze page…' });
+      send('AI_THINKING', { url: liveUrl });
+      send('LOG', { level: 'info', msg: '  🤖 Asking AI…' });
 
       const aiResult = await callAI(aiPayload);
+      let aiData = { actions: [], assertions: [], discoveredRoutes: [], suggestions: [] };
 
       if (!aiResult) {
-        send('LOG', { level: 'error', msg: '  AI API unreachable — skipping page' });
+        send('LOG', { level: 'error', msg: '  AI API unreachable — using auto-fallback actions' });
         issues.push({ page: currentUrl, issue: 'AI API did not respond' });
-        continue;
+      } else {
+        // Parse the AI response (JSON string inside { success, response })
+        try {
+          const raw     = typeof aiResult.response === 'string' ? aiResult.response : JSON.stringify(aiResult.response || aiResult);
+          const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          aiData = JSON.parse(cleaned);
+        } catch (_) {
+          try {
+            const m = (aiResult.response || '').match(/\{[\s\S]*\}/);
+            if (m) aiData = JSON.parse(m[0]);
+          } catch (_) {}
+        }
+        send('AI_RESPONSE', {
+          actions:    (aiData.actions || []).length,
+          routes:     (aiData.discoveredRoutes || []).length,
+          assertions: (aiData.assertions || []).length,
+        });
+        send('LOG', { level: 'success', msg: `  AI → ${(aiData.actions||[]).length} action(s), ${(aiData.discoveredRoutes||[]).length} route(s)` });
       }
 
-      // Parse AI response (it returns { success, response } where response is a JSON string)
-      let aiData = { actions: [], assertions: [], discoveredRoutes: [], suggestions: [] };
-      try {
-        const raw = typeof aiResult.response === 'string' ? aiResult.response : JSON.stringify(aiResult.response || aiResult);
-        // Strip markdown code fences if AI wraps it
-        const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        aiData = JSON.parse(cleaned);
-      } catch (_) {
-        // Try extracting JSON object from the string
+      // ── 6. Fallback actions when AI returns nothing ────────────────────────
+      if ((aiData.actions || []).length === 0) {
+        aiData.actions = generateFallbackActions(dom);
+        if (aiData.actions.length > 0) {
+          send('LOG', { level: 'info', msg: `  ⚡ Fallback: auto-generated ${aiData.actions.length} action(s) from DOM` });
+        }
+      }
+
+      // ── 7. Add AI-discovered routes to queue ──────────────────────────────
+      for (const route of (aiData.discoveredRoutes || [])) {
         try {
-          const match = (aiResult.response || '').match(/\{[\s\S]*\}/);
-          if (match) aiData = JSON.parse(match[0]);
+          const full = route.startsWith('http') ? route : new URL(route, currentUrl).href;
+          if (!visitedPages.has(full) && !discoveredSet.has(full)) {
+            queue.push(full);
+            discoveredSet.add(full);
+            send('ROUTE_FOUND', { url: full, from: liveUrl });
+            send('LOG', { level: 'info', msg: `  🔍 AI route: ${full}` });
+          }
         } catch (_) {}
       }
 
-      const actionCount = (aiData.actions || []).length;
-      const routeCount  = (aiData.discoveredRoutes || []).length;
-      send('AI_RESPONSE', { actions: actionCount, routes: routeCount, assertions: (aiData.assertions||[]).length });
-      send('LOG', { level: 'success', msg: `  AI returned ${actionCount} action(s), ${routeCount} route(s)` });
+      // ── 8. Execute actions ────────────────────────────────────────────────
+      const pageRecord = { url: liveUrl, title: pageTitle, actions: [], assertions: [] };
 
-      // ── Execute actions ──
       for (const action of (aiData.actions || [])) {
-        if (stepCount >= maxSteps) break;
+        if (stepCount >= maxSteps) { send('LOG', { level: 'info', msg: `  ⏹  Max steps (${maxSteps}) reached` }); break; }
         stepCount++;
 
-        const actionLabel = `${action.tool || action.type} → ${action.selector || action.url || ''}`;
+        const label = `${action.tool || action.type || 'action'} → ${action.selector || action.url || ''}${action.text ? ` "${action.text}"` : ''}`;
+        const isFallback = !!action._fallback;
         send('ACTION_EXEC', { action, stepCount });
-        send('LOG', { level: 'step', msg: `  [${stepCount}] ${actionLabel}` });
+        send('LOG', { level: 'step', msg: `  [${stepCount}] ${isFallback ? '⚡' : '🤖'} ${label}` });
 
         const urlBefore = page.url();
+        let actionResult = { ...action, passed: false, error: null };
         try {
           await executeAIAction(page, action, credentials);
           passed++;
-          testedComponents[action.selector || action.tool] = true;
+          actionResult.passed = true;
+          pageRecord.actions.push(actionResult);
 
           const urlAfter = page.url();
           const shot = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => null);
           if (shot) {
-            const s = { data: shot.toString('base64'), url: urlAfter, label: actionLabel, passed: true };
+            const s = { data: shot.toString('base64'), url: urlAfter, label, passed: true };
             allScreenshots.push(s);
             send('SCREENSHOT', s);
           }
@@ -1238,74 +1375,73 @@ app.post('/api/ai-test/run', async (req, res) => {
             queue.push(urlAfter);
             discoveredSet.add(urlAfter);
             send('ROUTE_FOUND', { url: urlAfter, from: urlBefore });
-            send('LOG', { level: 'info', msg: `  🔍 New route discovered: ${urlAfter}` });
+            send('LOG', { level: 'info', msg: `  🔍 URL changed → ${urlAfter}` });
           }
-
           send('ACTION_PASS', { action, stepCount, url: urlAfter });
+
         } catch (err) {
           failed++;
           const errMsg = err.message.split('\n')[0];
+          actionResult.error = errMsg;
+          pageRecord.actions.push(actionResult);
           send('ACTION_FAIL', { action, stepCount, error: errMsg });
-          send('LOG', { level: 'error', msg: `  ✗ Failed: ${errMsg}` });
-          issues.push({ page: currentUrl, action: actionLabel, issue: errMsg });
+          send('LOG', { level: 'error', msg: `  ✗ ${label} — ${errMsg}` });
+          issues.push({ page: currentUrl, action: label, issue: errMsg });
 
           const errShot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => null);
           if (errShot) {
-            const s = { data: errShot.toString('base64'), url: page.url(), label: `Error: ${actionLabel}`, passed: false };
+            const s = { data: errShot.toString('base64'), url: page.url(), label: `Error: ${label}`, passed: false };
             allScreenshots.push(s);
             send('SCREENSHOT', s);
           }
         }
       }
 
-      // ── Run assertions ──
+      // ── 9. Assertions ─────────────────────────────────────────────────────
       for (const assertion of (aiData.assertions || [])) {
         const ok = await runAssertion(page, assertion);
-        if (ok) { assertPassed++; send('LOG', { level: 'success', msg: `  ✓ Assert passed: ${assertion.selector}` }); }
-        else     { assertFailed++; send('LOG', { level: 'error',   msg: `  ✗ Assert failed: ${assertion.selector} (expected ${assertion.expected})` }); issues.push({ page: currentUrl, issue: `Assertion failed: ${assertion.selector}` }); }
+        pageRecord.assertions.push({ ...assertion, passed: ok });
+        if (ok) {
+          assertPassed++;
+          send('LOG', { level: 'success', msg: `  ✓ Assert: ${assertion.selector} is ${assertion.expected}` });
+        } else {
+          assertFailed++;
+          send('LOG', { level: 'error', msg: `  ✗ Assert failed: ${assertion.selector} expected ${assertion.expected}` });
+          issues.push({ page: currentUrl, issue: `Assertion failed: ${assertion.selector}` });
+        }
       }
 
-      // ── Add discovered routes ──
-      for (const route of (aiData.discoveredRoutes || [])) {
-        try {
-          const full = route.startsWith('http') ? route : new URL(route, currentUrl).href;
-          if (!visitedPages.has(full) && !discoveredSet.has(full)) {
-            queue.push(full);
-            discoveredSet.add(full);
-            send('ROUTE_FOUND', { url: full, from: currentUrl });
-            send('LOG', { level: 'info', msg: `  🔍 AI discovered route: ${full}` });
-          }
-        } catch (_) {}
-      }
-
-      // ── AI suggestions ──
-      for (const suggestion of (aiData.suggestions || [])) {
-        send('LOG', { level: 'info', msg: `  💡 Suggestion: ${suggestion}` });
-      }
-
+      pageActions.push(pageRecord);
       send('PAGE_DONE', { url: currentUrl });
-      send('LOG', { level: 'success', msg: `  ✓ Page done (${(aiData.actions||[]).length} actions ran)\n` });
+      send('LOG', { level: 'success', msg: `  ✓ Page done — ${pageRecord.actions.length} action(s), queue: ${queue.length}\n` });
     }
 
-    // ── Final report ──
+    // ── FINAL REPORT ──────────────────────────────────────────────────────────
     const totalActions = passed + failed;
     const coverage = totalActions > 0 ? Math.round((passed / totalActions) * 100) : 100;
+
+    const stopReason = queue.length === 0   ? 'All discovered routes tested'
+                     : visitedPages.size >= maxPages ? `Max pages limit (${maxPages}) reached`
+                     : `Max steps limit (${maxSteps}) reached`;
+
     const report = {
-      totalPages: discoveredSet.size,
-      testedPages: visitedPages.size,
+      totalPages:    discoveredSet.size,
+      testedPages:   visitedPages.size,
       totalActions,
       passed,
       failed,
       assertPassed,
       assertFailed,
-      coverage: `${coverage}%`,
-      visitedPages: [...visitedPages],
+      coverage:      `${coverage}%`,
+      visitedPages:  [...visitedPages],
       discoveredRoutes: [...discoveredSet],
       issues,
       screenshotCount: allScreenshots.length,
+      stopReason,
+      pageActions,    // ← per-page action log for Playwright code gen
     };
 
-    send('LOG', { level: 'success', msg: `\n✅ Testing complete — ${visitedPages.size} page(s), ${passed}/${totalActions} actions passed, ${coverage}% coverage` });
+    send('LOG', { level: 'success', msg: `\n✅ Done — ${visitedPages.size} page(s) · ${passed}/${totalActions} actions · ${coverage}% · ${stopReason}` });
     send('COMPLETE', report);
 
   } catch (err) {
